@@ -1,0 +1,15 @@
+{
+  "root": {
+    "label": "Root Node",
+    "children": [
+      {
+        "label": "Child 1",
+        "link": "1.stp"
+      },
+      {
+        "label": "Child 2",
+        "link": "2.stp"
+      }
+    ]
+  }
+}
