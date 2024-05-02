@@ -25,7 +25,7 @@ impl From<LogLevel> for LevelFilter {
     }
 }
 
-/// CLI interface for determining the pixel contribution of the geometry from all views.
+/// CLI interface for merging step files into a single monolithic step file.
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Options {
@@ -36,6 +36,10 @@ pub struct Options {
     /// The input file to with the assembly structure
     #[arg(short, long)]
     pub input_file: PathBuf,
+
+    /// The output file to write the merged step file to
+    #[arg(short, long)]
+    pub output_file: PathBuf,
 }
 
 impl Options {
@@ -43,5 +47,6 @@ impl Options {
     pub fn dump_to_log(&self) {
         info!("log_level: {:?}", self.log_level);
         info!("input_file: {:?}", self.input_file);
+        info!("output_file: {:?}", self.output_file);
     }
 }

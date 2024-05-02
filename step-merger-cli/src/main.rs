@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::Parser;
 use log::{error, info, LevelFilter};
 use options::Options;
-use step_merger::Assembly;
+use step_merger::{step::StepData, Assembly};
 
 /// Parses the program arguments and returns None, if no arguments were provided and Some otherwise.
 fn parse_args() -> Result<Options> {
@@ -44,10 +44,14 @@ fn run_program() -> Result<()> {
     options.dump_to_log();
     info!("-------");
 
-    info!("Read assembly structure...");
-    let t = Instant::now();
-    let assembly: Assembly = step_merger::Assembly::from_file(options.input_file)?;
-    info!("Read assembly structure...DONE in {} ms", t.elapsed().as_millis());
+    info!("Read STEP data...");
+    let step_data = StepData::from_file(options.input_file)?;
+    info!("Read STEP data...DONE");
+
+    // info!("Read assembly structure...");
+    // let t = Instant::now();
+    // let assembly: Assembly = step_merger::Assembly::from_file(options.input_file)?;
+    // info!("Read assembly structure...DONE in {} ms", t.elapsed().as_millis());
 
     Ok(())
 }
