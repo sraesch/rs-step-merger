@@ -1,0 +1,65 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in library 'step-merger'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=step-merger"
+                ],
+                "filter": {
+                    "name": "step-merger",
+                    "kind": "lib"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug 1.stp",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=step-merger-cli",
+                    "--package=step-merger-cli"
+                ],
+                "filter": {
+                    "name": "step-merger-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": ["-i", "/Users/sascharasch/projects/rs-step-merger/test_data/1.stp",
+                     "-o", "out.stp", "-l", "trace"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'step-merger-cli'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=step-merger-cli",
+                    "--package=step-merger-cli"
+                ],
+                "filter": {
+                    "name": "step-merger-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
