@@ -13,6 +13,9 @@ quick_error! {
         InvalidFormat(err: String) {
             display("{}", err)
         }
+        ParsingError(err: String) {
+            display("{}", err)
+        }
     }
 }
 
