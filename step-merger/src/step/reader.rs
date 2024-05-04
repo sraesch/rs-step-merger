@@ -4,9 +4,9 @@ use log::trace;
 
 use crate::{Error, Result};
 
-use super::StepData;
+use super::{StepData, StepEntry};
 
-
+use chumsky::prelude::*;
 
 /// A reader for a STEP file.
 pub struct STEPReader<R: Read> {
@@ -50,81 +50,6 @@ impl<R: Read> STEPReader<R> {
         trace!("ISO string: {}", self.iso);
 
         self.seek_next_line_entry("HEADER;")?;
-        self.seek_until_word("FILE_DESCRIPTION")?;
-        self.seek_until_char('(')?;
-        self.seek_until_char('(')?;
-        self.seek_until_char(')')?;
-        self.seek_until_char(',')?;
-        self.seek_until_char('\'')?;
-        let implementation_level = self.copy_until_char('\'')?;
-        trace!("Implementation level: {}", implementation_level);
-
-        Ok(())
-    }
-
-    /// Seeks until the given character has been found and skips over it.
-    ///
-    /// # Arguments
-    /// * `chr` - The character to seek.
-    fn seek_until_char(&mut self, chr: char) -> Result<()> {
-        // find the character
-        for c in self.reader.chars() {
-            let c = c.map_err(|e| Error::IO(format!("Failed to read char: {}", e)))?;
-            if c == chr {
-                break;
-            }
-        }
-
-        self.reader.chars().next();
-
-        Ok(())
-    }
-
-    /// Seeks until the given character has been found and skips over it.
-    ///
-    /// # Arguments
-    /// * `chr` - The character to seek.
-    fn copy_until_char(&mut self, chr: char) -> Result<String> {
-        let mut buf: String = String::new();
-
-        // find the character
-        let chars = self.reader.chars();
-        for c in chars {
-            let c = c.map_err(|e| Error::IO(format!("Failed to read char: {}", e)))?;
-            if c == chr {
-                break;
-            } else {
-                buf.push(c);
-            }
-        }
-
-        Ok(buf)
-    }
-
-    /// Seeks until the given word has been found and skips over it.
-    ///
-    /// # Arguments
-    /// * `word` - The word to seek.
-    fn seek_until_word(&mut self, word: &str) -> Result<()> {
-        // find the word
-        let chars = self.reader.chars();
-
-        let mut word_chars = word.chars().peekable();
-        for c in chars {
-            let c = c.map_err(|e| Error::IO(format!("Failed to read char: {}", e)))?;
-            if let Some(w) = word_chars.next() {
-                // reset word chars if the character does not match
-                if c != w {
-                    word_chars = word.chars().peekable();
-                }
-            } else {
-                break;
-            }
-
-            if word_chars.peek().is_none() {
-                break;
-            }
-        }
 
         Ok(())
     }
@@ -161,5 +86,165 @@ impl<R: Read> STEPReader<R> {
 
         // map none to error
         Ok(line)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StepHeader {
+    pub iso: String,
+    pub implementation_level: String,
+    pub protocol: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ParsedStep {
+    Header(StepHeader),
+    Entry(StepEntry),
+    Data(Vec<StepEntry>),
+    Step(StepHeader, Vec<StepEntry>),
+}
+
+fn parser() -> impl Parser<char, ParsedStep, Error = Simple<char>> {
+    recursive(|value| {
+        // The parser for comments and space which we can ignore.
+        let comment = just("/*").then(take_until(just("*/"))).padded();
+        let ignore = comment.repeated();
+
+        // The parser for the initial ISO string.
+        let iso = just("ISO-")
+            .ignore_then(filter(|c| *c != ';').repeated())
+            .then_ignore(just(';'))
+            .collect::<String>()
+            .padded()
+            .padded_by(ignore);
+
+        let str = just('\'')
+            .ignore_then(filter(|c| *c != '\'').repeated())
+            .then_ignore(just('\''))
+            .collect::<String>()
+            .padded()
+            .padded_by(ignore);
+
+        // The parser for a list of strings in brackets, i.e. ('Foobar') or ('adasd', 'asdasd').
+        let str_brackets = str
+            .chain(just(',').ignore_then(str).repeated())
+            .or_not()
+            .flatten()
+            .delimited_by(just('('), just(')'))
+            .labelled("array");
+
+        // The parser for the file description.
+        let file_description = text::keyword("FILE_DESCRIPTION")
+            .ignore_then(
+                str_brackets
+                    .then_ignore(just(','))
+                    .ignore_then(str)
+                    .delimited_by(just('('), just(')'))
+                    .padded()
+                    .padded_by(ignore)
+                    .then_ignore(just(';')),
+            )
+            .padded()
+            .padded_by(ignore)
+            .labelled("file_description");
+
+        // The the parser for the file name.
+        let file_name = text::keyword("FILE_NAME")
+            .ignore_then(
+                str.then_ignore(just(',')) // name
+                    .then_ignore(str) // date
+                    .then_ignore(just(','))
+                    .ignore_then(str_brackets) // author
+                    .then_ignore(just(','))
+                    .ignore_then(str_brackets) // organization
+                    .then_ignore(just(','))
+                    .ignore_then(str) // preprocessor_version
+                    .then_ignore(just(','))
+                    .ignore_then(str) // originating_system
+                    .then_ignore(just(','))
+                    .ignore_then(str) // authorization
+                    .delimited_by(just('('), just(')'))
+                    .padded()
+                    .padded_by(ignore)
+                    .then_ignore(just(';')),
+            )
+            .padded()
+            .padded_by(ignore)
+            .labelled("file_name");
+
+        let file_schema = text::keyword("FILE_SCHEMA")
+            .ignore_then(
+                str_brackets
+                    .delimited_by(just('('), just(')'))
+                    .padded()
+                    .padded_by(ignore)
+                    .then_ignore(just(';')),
+            )
+            .padded()
+            .padded_by(ignore)
+            .labelled("file_schema");
+
+        // The parser for the header section.
+        let header_section = text::keyword("HEADER")
+            .padded()
+            .padded_by(ignore)
+            .ignore_then(just(';'))
+            .ignore_then(file_description)
+            .then_ignore(file_name)
+            .then(file_schema)
+            .padded()
+            .padded_by(ignore)
+            .then_ignore(text::keyword("ENDSEC"))
+            .padded()
+            .padded_by(ignore)
+            .then_ignore(just(';'))
+            .labelled("header_section");
+
+        // The parser for the full header information of a STEP file.
+        let header = iso
+            .then(header_section)
+            .map(|(iso, (implementation_level, protocol))| {
+                ParsedStep::Header(StepHeader {
+                    iso,
+                    implementation_level,
+                    protocol,
+                })
+            })
+            .padded()
+            .padded_by(ignore)
+            .labelled("header");
+
+        header
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reading() {
+        let data = r#"
+
+        ISO-10303-21;
+        HEADER;
+        FILE_DESCRIPTION(('CTC-02 geometry with PMI representation and/or presentation','from the NIST MBE PMI Validation and Conformance Testing Project'),'2;1');
+        FILE_NAME('nist_ctc_02_asme1_ap203.stp','2017-03-10T12:15:07-07:00',(''),(''),'','','');
+        FILE_SCHEMA (('AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF { 1 0 10303 403 2 1 2}'));
+        ENDSEC;
+
+        "#;
+
+        let result = parser().parse(data);
+        assert!(result.is_ok(), "Failed with {:?}", result);
+        let parsed_step = result.unwrap();
+        assert_eq!(
+            parsed_step,
+            ParsedStep::Header(StepHeader{
+                iso: "10303-21".to_owned(),
+                implementation_level: "2;1".to_owned(),
+                protocol: vec!["AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF { 1 0 10303 403 2 1 2}".to_owned()],
+            })
+        );
     }
 }

@@ -6,29 +6,30 @@ use self::reader::STEPReader;
 use crate::Result;
 
 /// A single entry in the STEP file.
-pub struct STEPEntry {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StepEntry {
     /// The id of the entry, must be unique.
-    id: i64,
+    id: u64,
 
     /// The definition string of the entry.
     definition: String,
 }
 
-impl STEPEntry {
+impl StepEntry {
     /// Creates a new STEP entry with the given id and definition.
     ///
     /// # Arguments
     /// * `id` - The id of the entry.
     /// * `definition` - The definition string of the entry.
-    pub fn new(id: i64, definition: &str) -> STEPEntry {
-        STEPEntry {
+    pub fn new(id: u64, definition: &str) -> StepEntry {
+        StepEntry {
             id,
             definition: definition.to_owned(),
         }
     }
 
     /// Returns the id of the entry.
-    pub fn get_id(&self) -> i64 {
+    pub fn get_id(&self) -> u64 {
         self.id
     }
 
@@ -43,7 +44,7 @@ pub struct StepData {
     /// The ISO string of the STEP file.
     iso: String,
 
-    entries: BTreeMap<i64, STEPEntry>,
+    entries: BTreeMap<u64, StepEntry>,
 }
 
 impl StepData {
@@ -74,7 +75,7 @@ impl StepData {
     ///
     /// # Arguments
     /// * `entry` - The entry to be added.
-    pub fn add_entry(&mut self, entry: STEPEntry) {
+    pub fn add_entry(&mut self, entry: StepEntry) {
         self.entries.insert(entry.id, entry);
     }
 
