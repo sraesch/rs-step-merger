@@ -48,6 +48,10 @@ fn run_program() -> Result<()> {
     let step_data = StepData::from_file(options.input_file)?;
     info!("Read STEP data...DONE");
 
+    info!("Write STEP data...");
+    step_data.to_file(options.output_file)?;
+    info!("Write STEP data...DONE");
+
     // info!("Read assembly structure...");
     // let t = Instant::now();
     // let assembly: Assembly = step_merger::Assembly::from_file(options.input_file)?;
