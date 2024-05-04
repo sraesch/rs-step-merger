@@ -1,4 +1,5 @@
 mod reader;
+mod writer;
 
 use std::{fs::File, path::Path};
 
@@ -95,6 +96,17 @@ impl StepData {
         }
     }
 
+    /// Writes the step data to the given file.
+    ///
+    /// # Arguments
+    /// * `filename` - The path to the file to write to.
+    pub fn to_file<P: AsRef<Path>>(&self, filename: P) -> Result<()> {
+        let filename_str: String = filename.as_ref().to_string_lossy().to_string();
+
+        let mut file = File::create(filename)?;
+        writer::write_step(&mut file, self, filename_str.as_str())
+    }
+
     /// Adds an entry to the step data.
     ///
     /// # Arguments
@@ -116,5 +128,10 @@ impl StepData {
     /// Returns the protocol list.
     pub fn get_protocol(&self) -> &[String] {
         &self.protocol
+    }
+
+    /// Returns the entries in the STEP file.
+    pub fn get_entries(&self) -> &[StepEntry] {
+        &self.entries
     }
 }
