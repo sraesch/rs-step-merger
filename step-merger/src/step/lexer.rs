@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Debug, Display},
-    ops::Range,
+    ops::{Neg, Range},
 };
 
 use chumsky::{extra::ParserExtra, prelude::*};
@@ -65,6 +65,8 @@ enum Symbol {
     Hash,
     Amp,
     Dol,
+    Dot,
+    Star,
 }
 
 impl<'src> Symbol {
@@ -79,6 +81,8 @@ impl<'src> Symbol {
             just('#').map(|_| Symbol::Hash),
             just('&').map(|_| Symbol::Amp),
             just('$').map(|_| Symbol::Dol),
+            just('.').map(|_| Symbol::Dot),
+            just('*').map(|_| Symbol::Star),
         ))
     }
 }
@@ -94,6 +98,8 @@ impl fmt::Display for Symbol {
             Symbol::Hash => write!(f, "#"),
             Symbol::Amp => write!(f, "&"),
             Symbol::Dol => write!(f, "$"),
+            Symbol::Dot => write!(f, "."),
+            Symbol::Star => write!(f, "*"),
         }
     }
 }
@@ -105,7 +111,8 @@ enum Token<'src> {
     Endsec,
     String(&'src str),
     Identifier(&'src str),
-    Number(usize),
+    Integer(isize),
+    Float(&'src str),
     Reference(usize),
     Sym(Symbol),
     Comment(&'src str),
@@ -121,7 +128,8 @@ impl fmt::Display for Token<'_> {
             Token::Endsec => write!(f, "ENDSEC"),
             Token::String(s) => write!(f, "'{s}'"),
             Token::Identifier(i) => write!(f, "{i}"),
-            Token::Number(n) => write!(f, "{n}"),
+            Token::Integer(n) => write!(f, "{n}"),
+            Token::Float(n) => write!(f, "{n}"),
             Token::Reference(r) => write!(f, "#{r}"),
             Token::Sym(s) => write!(f, "{s}"),
             Token::Comment(c) => write!(f, "/*{c}*/"),
@@ -135,6 +143,8 @@ impl<'src> Token<'src> {
     fn parser<E: ParserExtra<'src, &'src str>>(
     ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
         choice((
+            Self::parse_float(),
+            Self::parse_integer_token(),
             Self::parse_reference(),
             Self::step_identifier(),
             Symbol::parse_symbol().map(Self::Sym),
@@ -142,26 +152,57 @@ impl<'src> Token<'src> {
         ))
     }
 
+    fn parse_float<E: ParserExtra<'src, &'src str>>(
+    ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
+        Self::parse_signed_integer()
+            .then(just('.'))
+            .then(Self::parse_integer().or_not())
+            .then(
+                just('E')
+                    .or(just('e'))
+                    .then(just('+').or_not().then(Self::parse_signed_integer())) // This allows E+-42
+                    .or_not(),
+            )
+            .to_slice()
+            .map(Self::Float)
+    }
+
+    #[must_use]
+    fn parse_integer<E: ParserExtra<'src, &'src str>>(
+    ) -> impl Parser<'src, &'src str, &'src str, E> + Copy {
+        any()
+            .filter(|n: &char| n.is_ascii_digit())
+            .repeated()
+            .at_least(1)
+            .to_slice()
+    }
+
+    #[must_use]
+    fn parse_signed_integer<E: ParserExtra<'src, &'src str>>(
+    ) -> impl Parser<'src, &'src str, &'src str, E> + Copy {
+        just("-").or_not().then(Self::parse_integer()).to_slice()
+    }
+
+    fn parse_integer_token<E: ParserExtra<'src, &'src str>>(
+    ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
+        Self::parse_signed_integer().map(|n: &str| Self::Integer(n.parse::<isize>().unwrap()))
+    }
+
     fn parse_reference<E: ParserExtra<'src, &'src str>>(
     ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
         just("#")
-            .ignore_then(
-                any()
-                    .filter(|c: &char| c.is_numeric())
-                    .repeated()
-                    .to_slice(),
-            )
+            .ignore_then(Self::parse_integer())
             .map(|s: &str| Self::Reference(s.parse::<usize>().unwrap()))
     }
 
     fn step_identifier<E: ParserExtra<'src, &'src str>>(
     ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
         let step_identifier = any()
-            .filter(|c: &char| c.is_ascii_uppercase() || c.is_numeric())
+            .filter(|c: &char| c.is_ascii_uppercase() || c.is_ascii_digit())
             .then(
                 any()
                     .filter(|c: &char| {
-                        c.is_ascii_uppercase() || *c == '-' || *c == '_' || c.is_numeric()
+                        c.is_ascii_uppercase() || *c == '-' || *c == '_' || c.is_ascii_digit()
                     })
                     .repeated(),
             )
@@ -208,6 +249,8 @@ impl<'src> Token<'src> {
 
 #[cfg(test)]
 mod test {
+    use std::fs;
+
     use super::*;
 
     #[test]
@@ -235,6 +278,17 @@ mod test {
     }
 
     #[test]
+    fn test_numbers() {
+        run_test("1234", vec![(Token::Integer(1234), 0..4).into()]);
+        run_test("-1234", vec![(Token::Integer(-1234), 0..5).into()]);
+        run_test("-1234.42", vec![(Token::Float("-1234.42"), 0..8).into()]);
+        run_test(
+            "-1234.42e44",
+            vec![(Token::Float("-1234.42e44"), 0..11).into()],
+        );
+    }
+
+    #[test]
     fn test_references() {
         run_test("#42", vec![(Token::Reference(42), 0..3).into()]);
         run_test(
@@ -251,222 +305,218 @@ mod test {
 
     #[test]
     fn wiki_example() {
-        let s = "ISO-10303-21;
-        HEADER;
-        FILE_DESCRIPTION(
-        /* description */ ('A minimal AP214 example with a single part'),
-        /* implementation_level */ '2;1');
-        FILE_NAME(
-        /* name */ 'demo',
-        /* time_stamp */ '2003-12-27T11:57:53',
-        /* author */ ('Lothar Klein'),
-        /* organization */ ('LKSoft'),
-        /* preprocessor_version */ ' ',
-        /* originating_system */ 'IDA-STEP',
-        /* authorization */ ' ');
-        FILE_SCHEMA (('AUTOMOTIVE_DESIGN { 1 0 10303 214 2 1 1}'));
-        ENDSEC;
-        DATA;
-        #10=ORGANIZATION('O0001','LKSoft','company');
-        #11=PRODUCT_DEFINITION_CONTEXT('part definition',#12,'manufacturing');
-        #12=APPLICATION_CONTEXT('mechanical design');
-        #13=APPLICATION_PROTOCOL_DEFINITION('','automotive_design',2003,#12);
-        #14=PRODUCT_DEFINITION('0',$,#15,#11);
-        #15=PRODUCT_DEFINITION_FORMATION('1',$,#16);
-        #16=PRODUCT('A0001','Test Part 1','',(#18));
-        #17=PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#16));
-        #18=PRODUCT_CONTEXT('',#12,'');
-        #19=APPLIED_ORGANIZATION_ASSIGNMENT(#10,#20,(#16));
-        #20=ORGANIZATION_ROLE('id owner');
-        ENDSEC;
-        END-ISO-10303-21;";
+        let filename = "../test_data/wiki.stp";
+        let s = fs::read_to_string(filename);
 
         use super::Symbol::*;
         use super::Token::*;
 
-        run_test(
-            s,
-            vec![
-                (StartTag, 0..12).into(),
-                (Sym(Sem), 12..13).into(),
-                (Header, 22..28).into(),
-                (Sym(Sem), 28..29).into(),
-                (Identifier("FILE_DESCRIPTION"), 38..54).into(),
-                (Sym(BrO), 54..55).into(),
-                (Sym(BrO), 82..83).into(),
-                (
-                    String("A minimal AP214 example with a single part"),
-                    83..127,
-                )
-                    .into(),
-                (Sym(BrC), 127..128).into(),
-                (Sym(Com), 128..129).into(),
-                (String("2;1"), 165..170).into(),
-                (Sym(BrC), 170..171).into(),
-                (Sym(Sem), 171..172).into(),
-                (Identifier("FILE_NAME"), 181..190).into(),
-                (Sym(BrO), 190..191).into(),
-                (String("demo"), 211..217).into(),
-                (Sym(Com), 217..218).into(),
-                (String("2003-12-27T11:57:53"), 244..265).into(),
-                (Sym(Com), 265..266).into(),
-                (Sym(BrO), 288..289).into(),
-                (String("Lothar Klein"), 289..303).into(),
-                (Sym(BrC), 303..304).into(),
-                (Sym(Com), 304..305).into(),
-                (Sym(BrO), 333..334).into(),
-                (String("LKSoft"), 334..342).into(),
-                (Sym(BrC), 342..343).into(),
-                (Sym(Com), 343..344).into(),
-                (String(" "), 380..383).into(),
-                (Sym(Com), 383..384).into(),
-                (String("IDA-STEP"), 418..428).into(),
-                (Sym(Com), 428..429).into(),
-                (String(" "), 458..461).into(),
-                (Sym(BrC), 461..462).into(),
-                (Sym(Sem), 462..463).into(),
-                (Identifier("FILE_SCHEMA"), 472..483).into(),
-                (Sym(BrO), 484..485).into(),
-                (Sym(BrO), 485..486).into(),
-                (String("AUTOMOTIVE_DESIGN { 1 0 10303 214 2 1 1}"), 486..528).into(),
-                (Sym(BrC), 528..529).into(),
-                (Sym(BrC), 529..530).into(),
-                (Sym(Sem), 530..531).into(),
-                (Endsec, 540..546).into(),
-                (Sym(Sem), 546..547).into(),
-                (Data, 556..560).into(),
-                (Sym(Sem), 560..561).into(),
-                (Reference(10), 570..573).into(),
-                (Sym(Eq), 573..574).into(),
-                (Identifier("ORGANIZATION"), 574..586).into(),
-                (Sym(BrO), 586..587).into(),
-                (String("O0001"), 587..594).into(),
-                (Sym(Com), 594..595).into(),
-                (String("LKSoft"), 595..603).into(),
-                (Sym(Com), 603..604).into(),
-                (String("company"), 604..613).into(),
-                (Sym(BrC), 613..614).into(),
-                (Sym(Sem), 614..615).into(),
-                (Reference(11), 624..627).into(),
-                (Sym(Eq), 627..628).into(),
-                (Identifier("PRODUCT_DEFINITION_CONTEXT"), 628..654).into(),
-                (Sym(BrO), 654..655).into(),
-                (String("part definition"), 655..672).into(),
-                (Sym(Com), 672..673).into(),
-                (Reference(12), 673..676).into(),
-                (Sym(Com), 676..677).into(),
-                (String("manufacturing"), 677..692).into(),
-                (Sym(BrC), 692..693).into(),
-                (Sym(Sem), 693..694).into(),
-                (Reference(12), 703..706).into(),
-                (Sym(Eq), 706..707).into(),
-                (Identifier("APPLICATION_CONTEXT"), 707..726).into(),
-                (Sym(BrO), 726..727).into(),
-                (String("mechanical design"), 727..746).into(),
-                (Sym(BrC), 746..747).into(),
-                (Sym(Sem), 747..748).into(),
-                (Reference(13), 757..760).into(),
-                (Sym(Eq), 760..761).into(),
-                (Identifier("APPLICATION_PROTOCOL_DEFINITION"), 761..792).into(),
-                (Sym(BrO), 792..793).into(),
-                (String(""), 793..795).into(),
-                (Sym(Com), 795..796).into(),
-                (String("automotive_design"), 796..815).into(),
-                (Sym(Com), 815..816).into(),
-                (Identifier("2003"), 816..820).into(),
-                (Sym(Com), 820..821).into(),
-                (Reference(12), 821..824).into(),
-                (Sym(BrC), 824..825).into(),
-                (Sym(Sem), 825..826).into(),
-                (Reference(14), 835..838).into(),
-                (Sym(Eq), 838..839).into(),
-                (Identifier("PRODUCT_DEFINITION"), 839..857).into(),
-                (Sym(BrO), 857..858).into(),
-                (String("0"), 858..861).into(),
-                (Sym(Com), 861..862).into(),
-                (Sym(Dol), 862..863).into(),
-                (Sym(Com), 863..864).into(),
-                (Reference(15), 864..867).into(),
-                (Sym(Com), 867..868).into(),
-                (Reference(11), 868..871).into(),
-                (Sym(BrC), 871..872).into(),
-                (Sym(Sem), 872..873).into(),
-                (Reference(15), 882..885).into(),
-                (Sym(Eq), 885..886).into(),
-                (Identifier("PRODUCT_DEFINITION_FORMATION"), 886..914).into(),
-                (Sym(BrO), 914..915).into(),
-                (String("1"), 915..918).into(),
-                (Sym(Com), 918..919).into(),
-                (Sym(Dol), 919..920).into(),
-                (Sym(Com), 920..921).into(),
-                (Reference(16), 921..924).into(),
-                (Sym(BrC), 924..925).into(),
-                (Sym(Sem), 925..926).into(),
-                (Reference(16), 935..938).into(),
-                (Sym(Eq), 938..939).into(),
-                (Identifier("PRODUCT"), 939..946).into(),
-                (Sym(BrO), 946..947).into(),
-                (String("A0001"), 947..954).into(),
-                (Sym(Com), 954..955).into(),
-                (String("Test Part 1"), 955..968).into(),
-                (Sym(Com), 968..969).into(),
-                (String(""), 969..971).into(),
-                (Sym(Com), 971..972).into(),
-                (Sym(BrO), 972..973).into(),
-                (Reference(18), 973..976).into(),
-                (Sym(BrC), 976..977).into(),
-                (Sym(BrC), 977..978).into(),
-                (Sym(Sem), 978..979).into(),
-                (Reference(17), 988..991).into(),
-                (Sym(Eq), 991..992).into(),
-                (Identifier("PRODUCT_RELATED_PRODUCT_CATEGORY"), 992..1024).into(),
-                (Sym(BrO), 1024..1025).into(),
-                (String("part"), 1025..1031).into(),
-                (Sym(Com), 1031..1032).into(),
-                (Sym(Dol), 1032..1033).into(),
-                (Sym(Com), 1033..1034).into(),
-                (Sym(BrO), 1034..1035).into(),
-                (Reference(16), 1035..1038).into(),
-                (Sym(BrC), 1038..1039).into(),
-                (Sym(BrC), 1039..1040).into(),
-                (Sym(Sem), 1040..1041).into(),
-                (Reference(18), 1050..1053).into(),
-                (Sym(Eq), 1053..1054).into(),
-                (Identifier("PRODUCT_CONTEXT"), 1054..1069).into(),
-                (Sym(BrO), 1069..1070).into(),
-                (String(""), 1070..1072).into(),
-                (Sym(Com), 1072..1073).into(),
-                (Reference(12), 1073..1076).into(),
-                (Sym(Com), 1076..1077).into(),
-                (String(""), 1077..1079).into(),
-                (Sym(BrC), 1079..1080).into(),
-                (Sym(Sem), 1080..1081).into(),
-                (Reference(19), 1090..1093).into(),
-                (Sym(Eq), 1093..1094).into(),
-                (Identifier("APPLIED_ORGANIZATION_ASSIGNMENT"), 1094..1125).into(),
-                (Sym(BrO), 1125..1126).into(),
-                (Reference(10), 1126..1129).into(),
-                (Sym(Com), 1129..1130).into(),
-                (Reference(20), 1130..1133).into(),
-                (Sym(Com), 1133..1134).into(),
-                (Sym(BrO), 1134..1135).into(),
-                (Reference(16), 1135..1138).into(),
-                (Sym(BrC), 1138..1139).into(),
-                (Sym(BrC), 1139..1140).into(),
-                (Sym(Sem), 1140..1141).into(),
-                (Reference(20), 1150..1153).into(),
-                (Sym(Eq), 1153..1154).into(),
-                (Identifier("ORGANIZATION_ROLE"), 1154..1171).into(),
-                (Sym(BrO), 1171..1172).into(),
-                (String("id owner"), 1172..1182).into(),
-                (Sym(BrC), 1182..1183).into(),
-                (Sym(Sem), 1183..1184).into(),
-                (Endsec, 1193..1199).into(),
-                (Sym(Sem), 1199..1200).into(),
-                (EndTag, 1209..1225).into(),
-                (Sym(Sem), 1225..1226).into(),
-            ],
-        );
+        match s {
+            Ok(s) => run_test(
+                &s,
+                vec![
+                    (StartTag, 0..12).into(),
+                    (Sym(Sem), 12..13).into(),
+                    (Header, 14..20).into(),
+                    (Sym(Sem), 20..21).into(),
+                    (Identifier("FILE_DESCRIPTION"), 22..38).into(),
+                    (Sym(BrO), 38..39).into(),
+                    (Sym(BrO), 58..59).into(),
+                    (
+                        String("A minimal AP214 example with a single part"),
+                        59..103,
+                    )
+                        .into(),
+                    (Sym(BrC), 103..104).into(),
+                    (Sym(Com), 104..105).into(),
+                    (String("2;1"), 133..138).into(),
+                    (Sym(BrC), 138..139).into(),
+                    (Sym(Sem), 139..140).into(),
+                    (Identifier("FILE_NAME"), 141..150).into(),
+                    (Sym(BrO), 150..151).into(),
+                    (String("demo"), 163..169).into(),
+                    (Sym(Com), 169..170).into(),
+                    (String("2003-12-27T11:57:53"), 188..209).into(),
+                    (Sym(Com), 209..210).into(),
+                    (Sym(BrO), 224..225).into(),
+                    (String("Lothar Klein"), 225..239).into(),
+                    (Sym(BrC), 239..240).into(),
+                    (Sym(Com), 240..241).into(),
+                    (Sym(BrO), 261..262).into(),
+                    (String("LKSoft"), 262..270).into(),
+                    (Sym(BrC), 270..271).into(),
+                    (Sym(Com), 271..272).into(),
+                    (String(" "), 300..303).into(),
+                    (Sym(Com), 303..304).into(),
+                    (String("IDA-STEP"), 330..340).into(),
+                    (Sym(Com), 340..341).into(),
+                    (String(" "), 362..365).into(),
+                    (Sym(BrC), 365..366).into(),
+                    (Sym(Sem), 366..367).into(),
+                    (Identifier("FILE_SCHEMA"), 368..379).into(),
+                    (Sym(BrO), 380..381).into(),
+                    (Sym(BrO), 381..382).into(),
+                    (String("AUTOMOTIVE_DESIGN { 1 0 10303 214 2 1 1}"), 382..424).into(),
+                    (Sym(BrC), 424..425).into(),
+                    (Sym(BrC), 425..426).into(),
+                    (Sym(Sem), 426..427).into(),
+                    (Endsec, 428..434).into(),
+                    (Sym(Sem), 434..435).into(),
+                    (Data, 436..440).into(),
+                    (Sym(Sem), 440..441).into(),
+                    (Reference(10), 442..445).into(),
+                    (Sym(Eq), 445..446).into(),
+                    (Identifier("ORGANIZATION"), 446..458).into(),
+                    (Sym(BrO), 458..459).into(),
+                    (String("O0001"), 459..466).into(),
+                    (Sym(Com), 466..467).into(),
+                    (String("LKSoft"), 467..475).into(),
+                    (Sym(Com), 475..476).into(),
+                    (String("company"), 476..485).into(),
+                    (Sym(BrC), 485..486).into(),
+                    (Sym(Sem), 486..487).into(),
+                    (Reference(11), 488..491).into(),
+                    (Sym(Eq), 491..492).into(),
+                    (Identifier("PRODUCT_DEFINITION_CONTEXT"), 492..518).into(),
+                    (Sym(BrO), 518..519).into(),
+                    (String("part definition"), 519..536).into(),
+                    (Sym(Com), 536..537).into(),
+                    (Reference(12), 537..540).into(),
+                    (Sym(Com), 540..541).into(),
+                    (String("manufacturing"), 541..556).into(),
+                    (Sym(BrC), 556..557).into(),
+                    (Sym(Sem), 557..558).into(),
+                    (Reference(12), 559..562).into(),
+                    (Sym(Eq), 562..563).into(),
+                    (Identifier("APPLICATION_CONTEXT"), 563..582).into(),
+                    (Sym(BrO), 582..583).into(),
+                    (String("mechanical design"), 583..602).into(),
+                    (Sym(BrC), 602..603).into(),
+                    (Sym(Sem), 603..604).into(),
+                    (Reference(13), 605..608).into(),
+                    (Sym(Eq), 608..609).into(),
+                    (Identifier("APPLICATION_PROTOCOL_DEFINITION"), 609..640).into(),
+                    (Sym(BrO), 640..641).into(),
+                    (String(""), 641..643).into(),
+                    (Sym(Com), 643..644).into(),
+                    (String("automotive_design"), 644..663).into(),
+                    (Sym(Com), 663..664).into(),
+                    (Integer(2003), 664..668).into(),
+                    (Sym(Com), 668..669).into(),
+                    (Reference(12), 669..672).into(),
+                    (Sym(BrC), 672..673).into(),
+                    (Sym(Sem), 673..674).into(),
+                    (Reference(14), 675..678).into(),
+                    (Sym(Eq), 678..679).into(),
+                    (Identifier("PRODUCT_DEFINITION"), 679..697).into(),
+                    (Sym(BrO), 697..698).into(),
+                    (String("0"), 698..701).into(),
+                    (Sym(Com), 701..702).into(),
+                    (Sym(Dol), 702..703).into(),
+                    (Sym(Com), 703..704).into(),
+                    (Reference(15), 704..707).into(),
+                    (Sym(Com), 707..708).into(),
+                    (Reference(11), 708..711).into(),
+                    (Sym(BrC), 711..712).into(),
+                    (Sym(Sem), 712..713).into(),
+                    (Reference(15), 714..717).into(),
+                    (Sym(Eq), 717..718).into(),
+                    (Identifier("PRODUCT_DEFINITION_FORMATION"), 718..746).into(),
+                    (Sym(BrO), 746..747).into(),
+                    (String("1"), 747..750).into(),
+                    (Sym(Com), 750..751).into(),
+                    (Sym(Dol), 751..752).into(),
+                    (Sym(Com), 752..753).into(),
+                    (Reference(16), 753..756).into(),
+                    (Sym(BrC), 756..757).into(),
+                    (Sym(Sem), 757..758).into(),
+                    (Reference(16), 759..762).into(),
+                    (Sym(Eq), 762..763).into(),
+                    (Identifier("PRODUCT"), 763..770).into(),
+                    (Sym(BrO), 770..771).into(),
+                    (String("A0001"), 771..778).into(),
+                    (Sym(Com), 778..779).into(),
+                    (String("Test Part 1"), 779..792).into(),
+                    (Sym(Com), 792..793).into(),
+                    (String(""), 793..795).into(),
+                    (Sym(Com), 795..796).into(),
+                    (Sym(BrO), 796..797).into(),
+                    (Reference(18), 797..800).into(),
+                    (Sym(BrC), 800..801).into(),
+                    (Sym(BrC), 801..802).into(),
+                    (Sym(Sem), 802..803).into(),
+                    (Reference(17), 804..807).into(),
+                    (Sym(Eq), 807..808).into(),
+                    (Identifier("PRODUCT_RELATED_PRODUCT_CATEGORY"), 808..840).into(),
+                    (Sym(BrO), 840..841).into(),
+                    (String("part"), 841..847).into(),
+                    (Sym(Com), 847..848).into(),
+                    (Sym(Dol), 848..849).into(),
+                    (Sym(Com), 849..850).into(),
+                    (Sym(BrO), 850..851).into(),
+                    (Reference(16), 851..854).into(),
+                    (Sym(BrC), 854..855).into(),
+                    (Sym(BrC), 855..856).into(),
+                    (Sym(Sem), 856..857).into(),
+                    (Reference(18), 858..861).into(),
+                    (Sym(Eq), 861..862).into(),
+                    (Identifier("PRODUCT_CONTEXT"), 862..877).into(),
+                    (Sym(BrO), 877..878).into(),
+                    (String(""), 878..880).into(),
+                    (Sym(Com), 880..881).into(),
+                    (Reference(12), 881..884).into(),
+                    (Sym(Com), 884..885).into(),
+                    (String(""), 885..887).into(),
+                    (Sym(BrC), 887..888).into(),
+                    (Sym(Sem), 888..889).into(),
+                    (Reference(19), 890..893).into(),
+                    (Sym(Eq), 893..894).into(),
+                    (Identifier("APPLIED_ORGANIZATION_ASSIGNMENT"), 894..925).into(),
+                    (Sym(BrO), 925..926).into(),
+                    (Reference(10), 926..929).into(),
+                    (Sym(Com), 929..930).into(),
+                    (Reference(20), 930..933).into(),
+                    (Sym(Com), 933..934).into(),
+                    (Sym(BrO), 934..935).into(),
+                    (Reference(16), 935..938).into(),
+                    (Sym(BrC), 938..939).into(),
+                    (Sym(BrC), 939..940).into(),
+                    (Sym(Sem), 940..941).into(),
+                    (Reference(20), 942..945).into(),
+                    (Sym(Eq), 945..946).into(),
+                    (Identifier("ORGANIZATION_ROLE"), 946..963).into(),
+                    (Sym(BrO), 963..964).into(),
+                    (String("id owner"), 964..974).into(),
+                    (Sym(BrC), 974..975).into(),
+                    (Sym(Sem), 975..976).into(),
+                    (Endsec, 977..983).into(),
+                    (Sym(Sem), 983..984).into(),
+                    (EndTag, 985..1001).into(),
+                    (Sym(Sem), 1001..1002).into(),
+                ],
+            ),
+            Err(e) => panic!("Failed to read {filename}: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_file_1() {
+        let filename = "../test_data/1.stp";
+        let s = fs::read_to_string(filename);
+        match s {
+            Ok(s) => run_test(&s, vec![]), // Results not included for brevity :D
+            Err(e) => panic!("Failed to read {filename}: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_file_2() {
+        let filename = "../test_data/2.stp";
+        let s = fs::read_to_string(filename);
+        match s {
+            Ok(s) => run_test(&s, vec![]), // Results not included for brevity :D
+            Err(e) => panic!("Failed to read {filename}: {e:?}"),
+        }
     }
 
     fn run_test(src: &str, cmp: Vec<Spanned<Token>>) {
