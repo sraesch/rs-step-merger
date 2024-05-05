@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Debug, Display},
-    ops::{Neg, Range},
+    ops::Range,
 };
 
 use chumsky::{extra::ParserExtra, prelude::*};
@@ -530,7 +530,17 @@ mod test {
     }
 
     fn run_large_test(src: &str) {
-        let (_, errs) = Token::lexer().parse(src).into_output_errors();
+        let (tokens, errs) = Token::lexer().parse(src).into_output_errors();
+        let parsed_len =
+            std::mem::size_of::<super::Token>() * tokens.expect("No tokens generated").len();
+        let src_len = src.len();
+
+        let fac = parsed_len as f64 / src_len as f64;
+
+        println!(
+            "Source size: {} Parsed size: {} ({:.2}x)",
+            src_len, parsed_len, fac
+        );
 
         if !errs.is_empty() {
             panic!("Errors while parsing: {errs:?}");
