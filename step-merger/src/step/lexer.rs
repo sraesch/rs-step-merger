@@ -504,7 +504,7 @@ mod test {
         let filename = "../test_data/1.stp";
         let s = fs::read_to_string(filename);
         match s {
-            Ok(s) => run_test(&s, vec![]), // Results not included for brevity :D
+            Ok(s) => run_large_test(&s),
             Err(e) => panic!("Failed to read {filename}: {e:?}"),
         }
     }
@@ -514,7 +514,7 @@ mod test {
         let filename = "../test_data/2.stp";
         let s = fs::read_to_string(filename);
         match s {
-            Ok(s) => run_test(&s, vec![]), // Results not included for brevity :D
+            Ok(s) => run_large_test(&s),
             Err(e) => panic!("Failed to read {filename}: {e:?}"),
         }
     }
@@ -527,7 +527,13 @@ mod test {
 
         assert!(errs.is_empty());
         assert_eq!(tokens, Some(cmp));
+    }
 
-        assert!(errs.is_empty());
+    fn run_large_test(src: &str) {
+        let (_, errs) = Token::lexer().parse(src).into_output_errors();
+
+        if !errs.is_empty() {
+            panic!("Errors while parsing: {errs:?}");
+        }
     }
 }
