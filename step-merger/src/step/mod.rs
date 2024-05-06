@@ -1,4 +1,4 @@
-mod lexer;
+pub mod lexer;
 mod reader;
 mod writer;
 

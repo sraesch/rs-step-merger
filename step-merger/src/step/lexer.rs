@@ -55,8 +55,8 @@ impl<T: Display> Display for Spanned<T> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum Symbol {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Symbol {
     Eq,
     Sem,
     BrO,
@@ -104,8 +104,8 @@ impl fmt::Display for Symbol {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-enum Token<'src> {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Token<'src> {
     Header,
     Data,
     Endsec,
@@ -149,6 +149,7 @@ impl<'src> Token<'src> {
             Self::step_identifier(),
             Symbol::parse_symbol().map(Self::Sym),
             Self::parse_string(),
+            Self::parse_comment(),
         ))
     }
 
@@ -219,7 +220,8 @@ impl<'src> Token<'src> {
     }
 
     // Comments are ignored in lexer right now. Can be enabled if necessary to get comment content.
-    fn comment() -> impl Parser<'src, &'src str, Token<'src>, extra::Err<Rich<'src, char>>> {
+    fn parse_comment<E: ParserExtra<'src, &'src str>>(
+    ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
         just("/*")
             .ignore_then(any().and_is(just("*/").not()).repeated().to_slice())
             .then_ignore(just("*/"))
@@ -234,16 +236,20 @@ impl<'src> Token<'src> {
             .map(Self::String)
     }
 
-    pub fn lexer(
-    ) -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<Rich<'src, char, Span>>>
+    pub fn lexer_iter(
+    ) -> impl IterParser<'src, &'src str, Spanned<Token<'src>>, extra::Err<Rich<'src, char, Span>>>
     {
         Self::parser()
             .map_with(|tok, e| (tok, e.span()).into())
             .padded()
-            .padded_by(Self::comment().or_not())
             .recover_with(skip_then_retry_until(any().ignored(), end()))
             .repeated()
-            .collect()
+    }
+
+    pub fn lexer(
+    ) -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<Rich<'src, char, Span>>>
+    {
+        Self::lexer_iter().collect()
     }
 }
 
@@ -260,6 +266,7 @@ mod test {
             "& /* Hello World! */ &",
             vec![
                 (Token::Sym(Symbol::Amp), 0..1).into(),
+                (Token::Comment(" Hello World! "), 2..20).into(),
                 (Token::Sym(Symbol::Amp), 21..22).into(),
             ],
         );
@@ -321,6 +328,7 @@ mod test {
                     (Sym(Sem), 20..21).into(),
                     (Identifier("FILE_DESCRIPTION"), 22..38).into(),
                     (Sym(BrO), 38..39).into(),
+                    (Comment(" description "), 40..57).into(),
                     (Sym(BrO), 58..59).into(),
                     (
                         String("A minimal AP214 example with a single part"),
@@ -329,27 +337,35 @@ mod test {
                         .into(),
                     (Sym(BrC), 103..104).into(),
                     (Sym(Com), 104..105).into(),
+                    (Comment(" implementation_level "), 106..132).into(),
                     (String("2;1"), 133..138).into(),
                     (Sym(BrC), 138..139).into(),
                     (Sym(Sem), 139..140).into(),
                     (Identifier("FILE_NAME"), 141..150).into(),
                     (Sym(BrO), 150..151).into(),
+                    (Comment(" name "), 152..162).into(),
                     (String("demo"), 163..169).into(),
                     (Sym(Com), 169..170).into(),
+                    (Comment(" time_stamp "), 171..187).into(),
                     (String("2003-12-27T11:57:53"), 188..209).into(),
                     (Sym(Com), 209..210).into(),
+                    (Comment(" author "), 211..223).into(),
                     (Sym(BrO), 224..225).into(),
                     (String("Lothar Klein"), 225..239).into(),
                     (Sym(BrC), 239..240).into(),
                     (Sym(Com), 240..241).into(),
+                    (Comment(" organization "), 242..260).into(),
                     (Sym(BrO), 261..262).into(),
                     (String("LKSoft"), 262..270).into(),
                     (Sym(BrC), 270..271).into(),
                     (Sym(Com), 271..272).into(),
+                    (Comment(" preprocessor_version "), 273..299).into(),
                     (String(" "), 300..303).into(),
                     (Sym(Com), 303..304).into(),
+                    (Comment(" originating_system "), 305..329).into(),
                     (String("IDA-STEP"), 330..340).into(),
                     (Sym(Com), 340..341).into(),
+                    (Comment(" authorization "), 342..361).into(),
                     (String(" "), 362..365).into(),
                     (Sym(BrC), 365..366).into(),
                     (Sym(Sem), 366..367).into(),
@@ -531,14 +547,20 @@ mod test {
 
     fn run_large_test(src: &str) {
         let (tokens, errs) = Token::lexer().parse(src).into_output_errors();
-        let parsed_len =
-            std::mem::size_of::<super::Token>() * tokens.expect("No tokens generated").len();
+        let tokens_len = tokens.expect("No tokens generated").len();
+        let parsed_len = std::mem::size_of::<super::Token>() * tokens_len;
         let src_len = src.len();
 
         let fac = parsed_len as f64 / src_len as f64;
 
         println!(
-            "Source size: {} Parsed size: {} ({:.2}x)",
+            "Tokens: {} Token Size: {}B Symbol Size: {}B",
+            tokens_len,
+            std::mem::size_of::<super::Token>(),
+            std::mem::size_of::<super::Symbol>()
+        );
+        println!(
+            "Source size: {}B Parsed size: {}B ({:.2}x)",
             src_len, parsed_len, fac
         );
 
