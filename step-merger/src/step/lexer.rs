@@ -248,8 +248,7 @@ impl<'src> Token<'src> {
     }
 
     pub fn lexer_iter(
-    ) -> impl IterParser<'src, &'src str, Spanned<Token<'src>>, extra::Err<Rich<'src, char, Span>>>
-    {
+    ) -> impl IterParser<'src, &'src str, Spanned<Token<'src>>, extra::Err<EmptyErr>> {
         Self::parser()
             .map_with(|tok, e| (tok, e.span()).into())
             .padded()
@@ -257,8 +256,7 @@ impl<'src> Token<'src> {
             .repeated()
     }
 
-    pub fn lexer(
-    ) -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<Rich<'src, char, Span>>>
+    pub fn lexer() -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<EmptyErr>>
     {
         Self::lexer_iter().collect()
     }
