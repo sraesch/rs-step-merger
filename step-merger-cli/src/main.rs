@@ -48,6 +48,8 @@ fn run_program() -> Result<()> {
     let step_data = StepData::from_file(options.input_file)?;
     info!("Read STEP data...DONE");
 
+    info!("Range of ids: {:?}", step_data.get_id_range());
+
     info!("Write STEP data...");
     step_data.to_file(options.output_file)?;
     info!("Write STEP data...DONE");

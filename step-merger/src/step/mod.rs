@@ -1,7 +1,9 @@
 mod reader;
 mod writer;
 
-use std::{fs::File, path::Path};
+use std::{fs::File, ops::Range, path::Path};
+
+use chumsky::chain::Chain;
 
 use crate::{Error, Result};
 
@@ -47,13 +49,16 @@ pub struct StepData {
     iso: String,
 
     /// The implementation level of the STEP file.
-    pub implementation_level: String,
+    implementation_level: String,
 
     /// A list of the protocols used in the STEP file.
-    pub protocol: Vec<String>,
+    protocol: Vec<String>,
 
     /// The entries in the STEP file.
     entries: Vec<StepEntry>,
+
+    /// The range of the ids in the STEP file.
+    id_range: Range<u64>,
 }
 
 impl StepData {
@@ -69,6 +74,7 @@ impl StepData {
             implementation_level,
             protocol,
             entries: Vec::new(),
+            id_range: 0..0,
         }
     }
 
@@ -88,7 +94,7 @@ impl StepData {
             let protocol = header.protocol;
 
             let mut step_data = StepData::new(iso_string, implementation_level, protocol);
-            step_data.entries = body;
+            step_data.set_entries(body);
 
             Ok(step_data)
         } else {
@@ -112,7 +118,39 @@ impl StepData {
     /// # Arguments
     /// * `entry` - The entry to be added.
     pub fn add_entry(&mut self, entry: StepEntry) {
+        // Update the id range
+        let id = entry.get_id();
+
+        if self.id_range.is_empty() {
+            self.id_range = id..(id + 1);
+        } else {
+            self.id_range.start = self.id_range.start.min(id);
+            self.id_range.end = self.id_range.end.max(id + 1);
+        }
+
         self.entries.push(entry);
+    }
+
+    /// Sets the entries of the step data and takes the ownership of the entries.
+    ///
+    /// # Arguments
+    /// * `entries` - The entries to be set.
+    pub fn set_entries(&mut self, entries: Vec<StepEntry>) {
+        self.entries = entries;
+
+        if let Some(first_entry) = self.entries.first() {
+            let first_id = first_entry.get_id();
+            let (r0, r1) = self
+                .entries
+                .iter()
+                .fold((first_id, first_id), |(r0, r1), s| {
+                    (r0.min(s.get_id()), r1.max(s.get_id()))
+                });
+
+            self.id_range = r0..(r1 + 1);
+        } else {
+            self.id_range = 0..0;
+        }
     }
 
     /// Returns the ISO string of the STEP file.
@@ -133,5 +171,10 @@ impl StepData {
     /// Returns the entries in the STEP file.
     pub fn get_entries(&self) -> &[StepEntry] {
         &self.entries
+    }
+
+    /// Returns the range of the ids in the STEP file.
+    pub fn get_id_range(&self) -> Range<u64> {
+        self.id_range.clone()
     }
 }
