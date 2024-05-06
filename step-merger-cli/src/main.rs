@@ -45,14 +45,24 @@ fn run_program() -> Result<()> {
     info!("-------");
 
     info!("Read STEP data...");
-    let step_data = StepData::from_file(options.input_file)?;
-    info!("Read STEP data...DONE");
+    let t = Instant::now();
+    let mut step_data = StepData::from_file(options.input_file)?;
+    info!("Read STEP data...DONE in {} s", t.elapsed().as_secs_f64());
 
     info!("Range of ids: {:?}", step_data.get_id_range());
 
+    info!("Random update of references...");
+    let t = Instant::now();
+    step_data.update_reference(|x| x + 1000);
+    info!(
+        "Random update of references...DONE in {} s",
+        t.elapsed().as_secs_f64()
+    );
+
     info!("Write STEP data...");
+    let t = Instant::now();
     step_data.to_file(options.output_file)?;
-    info!("Write STEP data...DONE");
+    info!("Write STEP data...DONE in {} s", t.elapsed().as_secs_f64());
 
     // info!("Read assembly structure...");
     // let t = Instant::now();

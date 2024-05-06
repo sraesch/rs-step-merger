@@ -3,8 +3,6 @@ mod writer;
 
 use std::{fs::File, ops::Range, path::Path};
 
-use chumsky::chain::Chain;
-
 use crate::{Error, Result};
 
 use self::reader::ParsedStep;
@@ -40,6 +38,67 @@ impl StepEntry {
     /// Returns the definition string of the entry.
     pub fn get_definition(&self) -> &str {
         &self.definition
+    }
+
+    pub fn update_references(&mut self, f: impl Fn(u64) -> u64) {
+        #[derive(PartialEq)]
+        enum Mode {
+            Definition,
+            Reference,
+            String,
+        }
+
+        // update my own id
+        self.id = f(self.id);
+
+        // update the references in the definition
+        let mut new_definition = String::new();
+        let mut mode = Mode::Definition;
+        let mut buffer = String::new();
+        for c in self.definition.chars() {
+            match mode {
+                Mode::Definition => {
+                    if c == '#' {
+                        mode = Mode::Reference;
+                    } else if c == '\'' {
+                        mode = Mode::String;
+                        new_definition.push(c);
+                    } else {
+                        new_definition.push(c);
+                    }
+                }
+                Mode::Reference => {
+                    if c.is_ascii_digit() {
+                        buffer.push(c);
+                    } else {
+                        let id = buffer.parse::<u64>().unwrap();
+                        buffer.clear();
+                        let new_id = f(id);
+                        new_definition.push('#');
+                        new_definition.push_str(&new_id.to_string());
+
+                        if c == '\'' {
+                            mode = Mode::String;
+                            new_definition.push(c);
+                        } else if c == '#' {
+                            mode = Mode::Reference;
+                        } else {
+                            mode = Mode::Definition;
+                            new_definition.push(c);
+                        }
+                    }
+                }
+                Mode::String => {
+                    if c == '\'' {
+                        mode = Mode::Definition;
+                    }
+
+                    new_definition.push(c);
+                }
+            }
+        }
+
+        self.definition = new_definition;
     }
 }
 
@@ -113,6 +172,18 @@ impl StepData {
         writer::write_step(&mut file, self, filename_str.as_str())
     }
 
+    /// Updates the references in the step data.
+    ///
+    /// #@ Arguments
+    /// * `f` - The function to update the references. Must be a strictly monotonic function.
+    pub fn update_reference(&mut self, f: impl Fn(u64) -> u64) {
+        for entry in self.entries.iter_mut() {
+            entry.update_references(&f);
+        }
+
+        self.id_range = f(self.id_range.start)..f(self.id_range.end);
+    }
+
     /// Adds an entry to the step data.
     ///
     /// # Arguments
@@ -176,5 +247,54 @@ impl StepData {
     /// Returns the range of the ids in the STEP file.
     pub fn get_id_range(&self) -> Range<u64> {
         self.id_range.clone()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_ranges() {
+        let mut step_data = StepData::new("".to_owned(), "".to_owned(), Vec::new());
+
+        assert_eq!(step_data.get_id_range(), 0..0);
+
+        step_data.add_entry(StepEntry::new(1, ""));
+        assert_eq!(step_data.get_id_range(), 1..2);
+
+        step_data.add_entry(StepEntry::new(3, ""));
+        assert_eq!(step_data.get_id_range(), 1..4);
+
+        step_data.add_entry(StepEntry::new(2, ""));
+        assert_eq!(step_data.get_id_range(), 1..4);
+
+        step_data.add_entry(StepEntry::new(4, ""));
+        assert_eq!(step_data.get_id_range(), 1..5);
+    }
+
+    #[test]
+    fn test_update_reference_simple() {
+        let f = |id| id + 1;
+
+        let mut entry = StepEntry::new(1, "IFCFOO('FOO', #2);");
+        entry.update_references(f);
+        assert_eq!(entry.get_id(), 2);
+        assert_eq!(entry.get_definition(), "IFCFOO('FOO', #3);");
+
+        let mut entry = StepEntry::new(1, "IFCFOO('FOO', #2#3);");
+        entry.update_references(f);
+        assert_eq!(entry.get_id(), 2);
+        assert_eq!(entry.get_definition(), "IFCFOO('FOO', #3#4);");
+    }
+
+    #[test]
+    fn test_update_reference_complex() {
+        let f = |id| id + 1000;
+
+        let mut entry = StepEntry::new(1, "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#9531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#8,#9,#7))REPRESENTATION_CONTEXT('',''));");
+        entry.update_references(f);
+        assert_eq!(entry.get_id(), 1001);
+        assert_eq!(entry.get_definition(), "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#10531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#1008,#1009,#1007))REPRESENTATION_CONTEXT('',''));");
     }
 }
