@@ -1,10 +1,7 @@
 [workspace]
 resolver = "2"
 
-members = [
-    "step-merger",
-    "step-merger-cli",
-]
+members = ["step-merger", "step-merger-cli", "step-export-neo4j"]
 
 [profile.release-with-debug]
 inherits = "release"
