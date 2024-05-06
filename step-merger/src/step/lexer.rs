@@ -116,6 +116,7 @@ pub enum Token<'src> {
     Reference(usize),
     Sym(Symbol),
     Comment(&'src str),
+    Enum(&'src str),
     StartTag,
     EndTag,
 }
@@ -135,6 +136,7 @@ impl fmt::Display for Token<'_> {
             Token::Comment(c) => write!(f, "/*{c}*/"),
             Token::StartTag => write!(f, "ISO-10303-21"),
             Token::EndTag => write!(f, "END-ISO-10303-21"),
+            Token::Enum(s) => write!(f, ".{s}."),
         }
     }
 }
@@ -143,6 +145,7 @@ impl<'src> Token<'src> {
     fn parser<E: ParserExtra<'src, &'src str>>(
     ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
         choice((
+            Self::parse_enum(),
             Self::parse_float(),
             Self::parse_integer_token(),
             Self::parse_reference(),
@@ -194,6 +197,14 @@ impl<'src> Token<'src> {
         just("#")
             .ignore_then(Self::parse_integer())
             .map(|s: &str| Self::Reference(s.parse::<usize>().unwrap()))
+    }
+
+    fn parse_enum<E: ParserExtra<'src, &'src str>>(
+    ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
+        just(".")
+            .ignore_then(Self::step_identifier().to_slice())
+            .then_ignore(just("."))
+            .map(|s: &str| Self::Enum(s))
     }
 
     fn step_identifier<E: ParserExtra<'src, &'src str>>(
@@ -270,6 +281,12 @@ mod test {
                 (Token::Sym(Symbol::Amp), 21..22).into(),
             ],
         );
+    }
+
+    #[test]
+    fn test_enum() {
+        run_test(".TEST.", vec![(Token::Enum("TEST"), 0..6).into()]);
+        run_test(".TRUE.", vec![(Token::Enum("TRUE"), 0..6).into()]);
     }
 
     #[test]
@@ -547,7 +564,8 @@ mod test {
 
     fn run_large_test(src: &str) {
         let (tokens, errs) = Token::lexer().parse(src).into_output_errors();
-        let tokens_len = tokens.expect("No tokens generated").len();
+        let tokens = tokens.expect("No tokens generated");
+        let tokens_len = tokens.len();
         let parsed_len = std::mem::size_of::<super::Token>() * tokens_len;
         let src_len = src.len();
 
