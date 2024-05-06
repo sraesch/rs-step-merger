@@ -9,8 +9,8 @@ pub(crate) type Span = SimpleSpan<usize>;
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Spanned<T> {
-    v: T,
-    s: Span,
+    pub v: T,
+    pub s: Span,
 }
 
 impl<T> Spanned<T> {

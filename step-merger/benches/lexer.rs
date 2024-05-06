@@ -24,8 +24,24 @@ pub fn lexer_bench_iter(c: &mut Criterion) {
     c.bench_function("Count 2.stp", |b| {
         b.iter(|| Token::lexer_iter().count().parse(&s))
     });
-    // Benchmark calculating the minimum, maximum and number of references
-    // c.bench_function("2.stp", |b| b.iter(|| Token::lexer_iter().));
+    // Benchmark calculating the maximum of references
+    c.bench_function("References 2.stp", |b| {
+        b.iter(|| {
+            let (tokens, _) = Token::lexer().parse(&s).into_output_errors();
+            let _k = tokens
+                .unwrap()
+                .into_iter()
+                .filter_map(|t| {
+                    if let Token::Reference(v) = t.v {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                })
+                .max()
+                .unwrap();
+        })
+    });
 }
 
 criterion_group!(benches, lexer_bench, lexer_bench_iter);
