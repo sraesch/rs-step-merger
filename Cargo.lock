@@ -1021,6 +1021,7 @@ dependencies = [
  "log",
  "neo4rs",
  "step-merger",
+ "tokio",
 ]
 
 [[package]]

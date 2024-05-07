@@ -1,3 +1,4 @@
+mod neo4j_export;
 mod options;
 
 use std::io::Write;
@@ -7,6 +8,8 @@ use clap::Parser;
 use log::{error, info, LevelFilter};
 use options::Options;
 use step_merger::step::StepData;
+
+use crate::neo4j_export::{Neo4J, Neo4JOptions};
 
 /// Parses the program arguments and returns None, if no arguments were provided and Some otherwise.
 fn parse_args() -> Result<Options> {
@@ -36,7 +39,7 @@ fn initialize_logging(filter: LevelFilter) {
 }
 
 /// Runs the program.
-fn run_program() -> Result<()> {
+async fn run_program() -> Result<()> {
     let options = parse_args()?;
     initialize_logging(LevelFilter::from(options.log_level));
 
@@ -48,11 +51,20 @@ fn run_program() -> Result<()> {
     let step_data = StepData::from_file(options.input_file)?;
     info!("Read STEP data...DONE");
 
+    info!("Exporting to Neo4J...");
+    let neo4j_options = Neo4JOptions {
+        uri: options.neo4j_uri,
+        user: options.user,
+        pass: options.password,
+    };
+    let neo4j = Neo4J::new(neo4j_options).await?;
+
     Ok(())
 }
 
-fn main() {
-    match run_program() {
+#[tokio::main]
+async fn main() {
+    match run_program().await {
         Ok(()) => {
             info!("SUCCESS");
         }
