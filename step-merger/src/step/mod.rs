@@ -1,4 +1,5 @@
 mod parser;
+pub mod ref_iter;
 mod writer;
 
 use std::{fs::File, io::Cursor, ops::Range, path::Path, str::FromStr};
