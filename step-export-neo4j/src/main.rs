@@ -57,7 +57,14 @@ async fn run_program() -> Result<()> {
         user: options.user,
         pass: options.password,
     };
+
+    info!("Connect to Neo4J {} database...", neo4j_options.uri);
     let neo4j = Neo4J::new(neo4j_options).await?;
+    info!("Connect to Neo4J database...DONE");
+
+    info!("Insert step entries...");
+    neo4j.insert_step_entries(step_data.get_entries()).await?;
+    info!("Insert step entries...DONE");
 
     Ok(())
 }

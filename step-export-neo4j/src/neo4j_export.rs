@@ -36,47 +36,46 @@ impl Neo4J {
     }
 
     pub async fn insert_step_entries(&self, entries: &[StepEntry]) -> anyhow::Result<()> {
-        // info!("Insert step entries...");
-        // let start = Instant::now();
-        // let graph = self.graph.clone();
-        // let tx = graph.start_txn().await?;
-        // for entry in entries.iter() {
-        //     tx.run(
-        //         query("CREATE (e:Entry {id: $id, definition: $definition})")
-        //             .param("id", entry.get_id() as i64)
-        //             .param("definition", entry.get_definition()),
-        //     )
-        //     .await?;
-        // }
-        // tx.commit().await?;
-        // info!(
-        //     "Insert step entries...DONE in {} s",
-        //     start.elapsed().as_secs_f32()
-        // );
+        info!("Insert step entries...");
+        let start = Instant::now();
+        let graph = self.graph.clone();
+        let mut tx = graph.start_txn().await?;
+        for entry in entries.iter() {
+            tx.run(
+                query("CREATE (e:Entry {id: $id, definition: $definition})")
+                    .param("id", entry.get_id() as i64)
+                    .param("definition", entry.get_definition()),
+            )
+            .await?;
+        }
+        tx.commit().await?;
+        info!(
+            "Insert step entries...DONE in {} s",
+            start.elapsed().as_secs_f32()
+        );
 
-        // info!("Insert entry references...");
-        // let start = Instant::now();
-        // let tx = graph.start_txn().await?;
-        // for entry in entries.iter() {
-        //     let c1 = &cache.id;
-        //     for cache_ref in cache.references.iter() {
-        //         let c2 = cache_ref.cache_id.clone();
+        info!("Insert entry references...");
+        let start = Instant::now();
+        let mut tx = graph.start_txn().await?;
+        for entry in entries.iter() {
+            let r0 = entry.get_id() as i64;
 
-        //         tx.run(
-        //             query(
-        //                 "MATCH (c1:Cache {id: $id1}), (c2:Cache {id: $id2}) CREATE (c1)-[:REF]->(c2)",
-        //             )
-        //             .param("id1", c1.clone())
-        //             .param("id2", c2),
-        //         )
-        //         .await?;
-        //     }
-        // }
-        // tx.commit().await?;
-        // info!(
-        //     "Insert cache references...DONE in {} s",
-        //     start.elapsed().as_secs_f32()
-        // );
+            for r1 in entry.get_references().iter().cloned().map(|r| r as i64) {
+                tx.run(
+                    query(
+                        "MATCH (r0:Entry {id: $r0}), (r1:Entry {id: $r1}) CREATE (r0)-[:REF]->(r1)",
+                    )
+                    .param("r0", r0)
+                    .param("r1", r1),
+                )
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        info!(
+            "Insert entry references...DONE in {} s",
+            start.elapsed().as_secs_f32()
+        );
 
         Ok(())
     }
