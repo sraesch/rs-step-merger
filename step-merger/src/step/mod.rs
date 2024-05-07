@@ -17,6 +17,14 @@ pub struct StepEntry {
     definition: String,
 }
 
+/// Internal structure for different modes during parsing the references.
+#[derive(PartialEq)]
+enum Mode {
+    Definition,
+    Reference,
+    String,
+}
+
 impl StepEntry {
     /// Creates a new STEP entry with the given id and definition.
     ///
@@ -40,14 +48,11 @@ impl StepEntry {
         &self.definition
     }
 
+    /// Updates the references in the step data using the given function.
+    ///
+    /// # Arguments
+    /// * `f` - The function to update the references. Must be a strictly monotonic function.
     pub fn update_references(&mut self, f: impl Fn(u64) -> u64) {
-        #[derive(PartialEq)]
-        enum Mode {
-            Definition,
-            Reference,
-            String,
-        }
-
         // update my own id
         self.id = f(self.id);
 
@@ -99,6 +104,50 @@ impl StepEntry {
         }
 
         self.definition = new_definition;
+    }
+
+    /// Returns a list of all references in the definition excluding the own id.
+    pub fn get_references(&self) -> Vec<u64> {
+        // update the references in the definition
+        let mut mode = Mode::Definition;
+        let mut buffer = String::new();
+        let mut result = Vec::new();
+
+        for c in self.definition.chars() {
+            match mode {
+                Mode::Definition => {
+                    if c == '#' {
+                        mode = Mode::Reference;
+                    } else if c == '\'' {
+                        mode = Mode::String;
+                    }
+                }
+                Mode::Reference => {
+                    if c.is_ascii_digit() {
+                        buffer.push(c);
+                    } else {
+                        let id = buffer.parse::<u64>().unwrap();
+                        buffer.clear();
+                        result.push(id);
+
+                        if c == '\'' {
+                            mode = Mode::String;
+                        } else if c == '#' {
+                            mode = Mode::Reference;
+                        } else {
+                            mode = Mode::Definition;
+                        }
+                    }
+                }
+                Mode::String => {
+                    if c == '\'' {
+                        mode = Mode::Definition;
+                    }
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -296,5 +345,20 @@ mod test {
         entry.update_references(f);
         assert_eq!(entry.get_id(), 1001);
         assert_eq!(entry.get_definition(), "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#10531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#1008,#1009,#1007))REPRESENTATION_CONTEXT('',''));");
+    }
+
+    #[test]
+    fn test_get_references_simple() {
+        let entry = StepEntry::new(1, "IFCFOO('FOO', #2);");
+        assert_eq!(entry.get_references(), vec![2]);
+
+        let entry = StepEntry::new(1, "IFCFOO('FOO', #2#3);");
+        assert_eq!(entry.get_references(), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_get_reference_complex() {
+        let entry = StepEntry::new(1, "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#9531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#8,#9,#7))REPRESENTATION_CONTEXT('',''));");
+        assert_eq!(entry.get_references(), vec![9531, 8, 9, 7]);
     }
 }
