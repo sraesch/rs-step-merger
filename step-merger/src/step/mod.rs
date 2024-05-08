@@ -1,3 +1,4 @@
+mod merger;
 mod reader;
 mod writer;
 
@@ -6,6 +7,8 @@ use std::{fs::File, ops::Range, path::Path};
 use crate::{Error, Result};
 
 use self::reader::ParsedStep;
+
+pub use merger::*;
 
 /// A single entry in the STEP file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
