@@ -1,6 +1,8 @@
-use crate::{Assembly, Node, Result};
+use std::{collections::HashMap, path::Path};
 
-use log::info;
+use crate::{Assembly, Error, Node, Result};
+
+use log::{debug, error, info};
 
 use super::{StepData, StepEntry};
 
@@ -26,6 +28,12 @@ struct StepMerger<'a> {
 
     // The serialized step data
     step_data: StepData,
+
+    /// The list of loaded step files and their respective ids
+    reference_map: HashMap<String, Option<NodeStepIds>>,
+
+    /// The list of referenced mechanical design entries
+    mechanical_design_ids: Vec<u64>,
 }
 
 impl<'a> StepMerger<'a> {
@@ -42,6 +50,8 @@ impl<'a> StepMerger<'a> {
             assembly,
             id_counter: 0,
             step_data,
+            reference_map: HashMap::new(),
+            mechanical_design_ids: Vec::new(),
         }
     }
 
@@ -58,7 +68,7 @@ impl<'a> StepMerger<'a> {
             .map(|node| self.create_node(node))
             .collect();
 
-        //
+        // create parent-child relations
         for (node, parent_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
             for child in node.get_children() {
                 let child_ids = &node_step_ids[*child];
@@ -71,6 +81,19 @@ impl<'a> StepMerger<'a> {
                 );
             }
         }
+
+        // load all referenced step files and add them to the current step data
+        for node in self.assembly.nodes.iter() {
+            if let Some(link) = node.get_link() {
+                if !self.reference_map.contains_key(link) {
+                    self.load_and_add_step(link)?;
+                }
+            }
+        }
+
+        debug!("Write mechanical part entries...");
+        self.write_mechanical_part_entries();
+        debug!("Write mechanical part entries...DONE");
 
         Ok(())
     }
@@ -105,6 +128,112 @@ impl<'a> StepMerger<'a> {
 
         self.add_entry("APPLICATION_PROTOCOL_DEFINITION('international standard', 'configuration_control_3d_design_ed2_mim',2004, #1)",
         );
+    }
+
+    /// Loads the given step file and adds the loaded step data to the current step data.
+    ///
+    /// # Arguments
+    /// * `file_path` - The path to the step file to be loaded.
+    fn load_and_add_step<P: AsRef<Path>>(&mut self, file_path: P) -> Result<()> {
+        info!("Load step file {}...", file_path.as_ref().display());
+        let step_data = StepData::from_file(file_path.as_ref())?;
+        info!("Load step file {}...DONE", file_path.as_ref().display());
+
+        // find the id for the APPLICATION_CONTEXT entry
+        let app_context_id = step_data
+            .get_entries()
+            .iter()
+            .find(|entry| {
+                entry
+                    .get_definition()
+                    .trim_start()
+                    .starts_with("APPLICATION_CONTEXT")
+            })
+            .map(|entry| entry.get_id())
+            .ok_or_else(|| {
+                Error::InvalidFormat(format!(
+                    "No APPLICATION_CONTEXT entry found in step file {}",
+                    file_path.as_ref().display()
+                ))
+            })?;
+
+        // define the update function for the ids to elevate all ids and to change the APPLICATION_CONTEXT id
+        let id_offset = self.id_counter;
+        let update_id = |id: u64| {
+            if id == app_context_id {
+                1
+            } else {
+                id + id_offset
+            }
+        };
+
+        // add the entries to the current step data
+        let mut max_id = 0u64;
+        for entry in step_data.get_entries() {
+            let definition = entry.get_definition().trim();
+
+            // exclude APPLICATION_CONTEXT and APPLICATION_PROTOCOL_DEFINITION
+            if definition.starts_with("APPLICATION_CONTEXT")
+                || definition.starts_with("APPLICATION_PROTOCOL_DEFINITION")
+            {
+                continue;
+            }
+
+            // create new entry and update the references
+            let mut new_entry = entry.clone();
+            new_entry.update_references(update_id);
+
+            // catch special case of MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION
+            if definition.starts_with("MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION") {
+                Self::get_ids_from_mechanical_part(&new_entry, &mut self.mechanical_design_ids);
+                continue;
+            } else {
+                self.step_data.add_entry(new_entry);
+            }
+
+            max_id = max_id.max(entry.get_id());
+        }
+
+        // update the id counter to the new max id
+        self.id_counter = max_id;
+
+        Ok(())
+    }
+
+    /// Writes the final MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
+    fn write_mechanical_part_entries(&mut self) {
+        // write related entries
+        let length = self.add_entry("(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))");
+        let angle_units = self.add_entry("(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))");
+        self.add_entry(&format!(
+            "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#{})",
+            angle_units
+        ));
+        let dim_exp = self.add_entry("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)");
+        let angle = self.add_entry(&format!(
+            "(CONVERSION_BASED_UNIT('DEGREE',#{})NAMED_UNIT(#101)PLANE_ANGLE_UNIT())",
+            dim_exp
+        ));
+        let unit = self.add_entry("(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())");
+        let uncertain = self.add_entry(&format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(10.E-03),#{},'distance_accuracy_value','Confusion accuracy')", length));
+        let full = self.add_entry(&format!("(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{},#{},#{}))REPRESENTATION_CONTEXT('',''))", uncertain, length, angle, unit));
+
+        // compile list of referenced ids
+        let mut list = String::new();
+        for id in self.mechanical_design_ids.iter() {
+            if list.is_empty() {
+                list.push_str(&format!("#{}", id));
+            } else {
+                list.push_str(&format!(",#{}", id));
+            }
+        }
+
+        let entry = format!(
+            "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',({}),#{})",
+            list, full
+        );
+
+        self.add_entry(&entry);
     }
 
     /// Creates a new node in the step data. Returns a tuple consisting of the PRODUCT_DEFINITION
@@ -231,6 +360,29 @@ impl<'a> StepMerger<'a> {
             start_id + 7
         ));
     }
+
+    /// Extracts all ids for the items defined in MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
+    ///
+    /// # Arguments
+    /// * `entry` - The MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
+    /// * `ids` - The list of ids where the extracted ids are added.
+    fn get_ids_from_mechanical_part(entry: &StepEntry, ids: &mut Vec<u64>) {
+        let mut entry_ids = entry.get_references();
+        if entry_ids.is_empty() {
+            error!("No references found in MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry");
+            return;
+        } else {
+            entry_ids.pop();
+        }
+
+        debug!(
+            "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION got id {} and has {} ids",
+            entry.get_id(),
+            entry_ids.len()
+        );
+
+        ids.append(&mut entry_ids);
+    }
 }
 
 /// The ids being generated for a node while creating the step data.
@@ -238,4 +390,20 @@ impl<'a> StepMerger<'a> {
 struct NodeStepIds {
     pub product_definition_id: u64,
     pub shape_representation_id: u64,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_parse_mechanical_design_entry() {
+        let s = "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',(#24),#187);";
+        let entry = StepEntry::new(1, s);
+        let mut ids = Vec::new();
+
+        StepMerger::get_ids_from_mechanical_part(&entry, &mut ids);
+
+        assert_eq!(ids, vec![24]);
+    }
 }

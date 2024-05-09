@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    {
+      "label": "Root Node",
+      "children": [1]
+    },
+    {
+      "label": "Cube Node",
+      "link": "cube.stp"
+    }
+  ]
+}
