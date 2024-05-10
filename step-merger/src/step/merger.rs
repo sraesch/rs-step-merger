@@ -1,6 +1,9 @@
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 
-use crate::{Assembly, Error, Node, Result};
+use crate::{identity_matrix, Assembly, Error, Node, Result};
 
 use log::{debug, error, info};
 
@@ -23,14 +26,14 @@ struct StepMerger<'a> {
     /// The assembly structure to be merged.
     assembly: &'a Assembly,
 
+    /// The id for the step entries.
+    default_coordinate_system: u64,
+
     /// The id counter for the step entries.
     id_counter: u64,
 
     // The serialized step data
     step_data: StepData,
-
-    /// The list of loaded step files and their respective ids
-    reference_map: HashMap<String, Option<NodeStepIds>>,
 
     /// The list of referenced mechanical design entries
     mechanical_design_ids: Vec<u64>,
@@ -48,9 +51,9 @@ impl<'a> StepMerger<'a> {
 
         StepMerger {
             assembly,
+            default_coordinate_system: 0,
             id_counter: 0,
             step_data,
-            reference_map: HashMap::new(),
             mechanical_design_ids: Vec::new(),
         }
     }
@@ -60,7 +63,19 @@ impl<'a> StepMerger<'a> {
         info!("Merging assembly structure into step file...");
         self.create_app_context();
 
-        // create all nodes and collect the node product definition and shape representation ids
+        // create default coordinate system
+        let coord_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))");
+        self.add_entry("DIRECTION('',(0.,0.,1.))");
+        self.add_entry("DIRECTION('',(1.,0.,0.))");
+        self.default_coordinate_system = self.add_entry(&format!(
+            "AXIS2_PLACEMENT_3D('',#{},#{},#{})",
+            coord_id,
+            coord_id + 1,
+            coord_id + 2
+        ));
+
+        // create the nodes of the assembly structure and collect the node product definition and
+        // shape representation ids
         let node_step_ids: Vec<NodeStepIds> = self
             .assembly
             .nodes
@@ -68,25 +83,45 @@ impl<'a> StepMerger<'a> {
             .map(|node| self.create_node(node))
             .collect();
 
-        // create parent-child relations
-        for (node, parent_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
+        // create the parent-child relations between the assembly nodes
+        for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
             for child in node.get_children() {
                 let child_ids = &node_step_ids[*child];
                 let child = &self.assembly.nodes[*child];
                 self.create_parent_child_relation(
                     node.get_label(),
                     child.get_label(),
-                    *parent_ids,
+                    *node_ids,
                     *child_ids,
+                    child.get_transform(),
                 );
             }
         }
 
         // load all referenced step files and add them to the current step data
+        let mut reference_map: HashMap<String, Vec<NodeStepIds>> = HashMap::new();
         for node in self.assembly.nodes.iter() {
             if let Some(link) = node.get_link() {
-                if !self.reference_map.contains_key(link) {
-                    self.load_and_add_step(link)?;
+                if !reference_map.contains_key(link) {
+                    let root_nodes = self.load_and_add_step(link)?;
+                    reference_map.insert(link.to_owned(), root_nodes);
+                }
+            }
+        }
+
+        // create the parent-child relations between the assembly nodes and the referenced step
+        // files
+        for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
+            if let Some(link) = node.get_link() {
+                let root_nodes = reference_map.get(link).unwrap();
+                for child_ids in root_nodes.iter() {
+                    self.create_parent_child_relation(
+                        node.get_label(),
+                        node.get_label(),
+                        *node_ids,
+                        *child_ids,
+                        &identity_matrix(),
+                    );
                 }
             }
         }
@@ -131,10 +166,11 @@ impl<'a> StepMerger<'a> {
     }
 
     /// Loads the given step file and adds the loaded step data to the current step data.
+    /// Returns the STEP ids of the root nodes.
     ///
     /// # Arguments
     /// * `file_path` - The path to the step file to be loaded.
-    fn load_and_add_step<P: AsRef<Path>>(&mut self, file_path: P) -> Result<()> {
+    fn load_and_add_step<P: AsRef<Path>>(&mut self, file_path: P) -> Result<Vec<NodeStepIds>> {
         info!("Load step file {}...", file_path.as_ref().display());
         let step_data = StepData::from_file(file_path.as_ref())?;
         info!("Load step file {}...DONE", file_path.as_ref().display());
@@ -168,6 +204,7 @@ impl<'a> StepMerger<'a> {
         };
 
         // add the entries to the current step data
+        let start_entry_index = self.step_data.get_entries().len();
         let mut max_id = 0u64;
         for entry in step_data.get_entries() {
             let definition = entry.get_definition().trim();
@@ -197,7 +234,11 @@ impl<'a> StepMerger<'a> {
         // update the id counter to the new max id
         self.id_counter = max_id;
 
-        Ok(())
+        // extract the root nodes from the loaded step data
+        let new_entries = &self.step_data.get_entries()[start_entry_index..];
+        let root_nodes = Self::find_root_nodes(new_entries.iter());
+
+        Ok(root_nodes)
     }
 
     /// Writes the final MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
@@ -310,16 +351,32 @@ impl<'a> StepMerger<'a> {
     /// * `child_label` - The label of the child node.
     /// * `parent_ids` - The step ids of the parent node.
     /// * `child_ids` - The step ids of the child node.
+    /// * `transform` - The transformation matrix from the parent to the child node.
     fn create_parent_child_relation(
         &mut self,
         parent_label: &str,
         child_label: &str,
         parent_ids: NodeStepIds,
         child_ids: NodeStepIds,
+        transform: &[f32; 16],
     ) {
-        let start_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))");
-        self.add_entry("DIRECTION('',(0.,0.,1.))");
-        self.add_entry("DIRECTION('',(1.,0.,0.))");
+        // extract the position, x-axis and z-axis vector
+        let position = &transform[12..15];
+        let x_axis = &transform[0..3];
+        let z_axis = &transform[8..11];
+
+        let start_id = self.add_entry(&format!(
+            "CARTESIAN_POINT('',({},{},{}))",
+            position[0], position[1], position[2],
+        ));
+        self.add_entry(&format!(
+            "DIRECTION('',({},{},{}))",
+            z_axis[0], z_axis[1], z_axis[2]
+        ));
+        self.add_entry(&format!(
+            "DIRECTION('',({},{},{}))",
+            x_axis[0], x_axis[1], x_axis[2]
+        ));
         self.add_entry(&format!(
             "AXIS2_PLACEMENT_3D('',#{},#{},#{})",
             start_id,
@@ -328,7 +385,7 @@ impl<'a> StepMerger<'a> {
         ));
         self.add_entry(&format!(
             "ITEM_DEFINED_TRANSFORMATION('','',#{},#{})",
-            start_id + 3,
+            self.default_coordinate_system,
             start_id + 3
         ));
         self.add_entry(&format!(
@@ -383,6 +440,137 @@ impl<'a> StepMerger<'a> {
 
         ids.append(&mut entry_ids);
     }
+
+    /// Finds the root nodes in the given entries.
+    ///
+    /// # Arguments
+    /// * `entries` - The entries to find the root nodes in.
+    fn find_root_nodes<'b, I>(entries: I) -> Vec<NodeStepIds>
+    where
+        I: Iterator<Item = &'b StepEntry>,
+    {
+        // We have the following entities:
+        // * PRODUCT_DEFINITION
+        // * SHAPE_REPRESENTATION
+        // * PRODUCT_DEFINITION_SHAPE
+        // * SHAPE_DEFINITION_REPRESENTATION
+        // * NEXT_ASSEMBLY_USAGE_OCCURRENCE
+        //
+        // The references between the entities are as follows:
+        // * NEXT_ASSEMBLY_USAGE_OCCURRENCE -> PRODUCT_DEFINITION
+        // * PRODUCT_DEFINITION_SHAPE -> PRODUCT_DEFINITION
+        // * SHAPE_DEFINITION_REPRESENTATION -> SHAPE_REPRESENTATION
+        // * SHAPE_DEFINITION_REPRESENTATION -> PRODUCT_DEFINITION_SHAPE
+        //
+        // We are interested to find the root node which is the node that has no parent, i.e. the
+        // product definition where no NEXT_ASSEMBLY_USAGE_OCCURRENCE references it.
+        // We then have to return the SHAPE_REPRESENTATION and PRODUCT_DEFINITION_SHAPE ids.
+        let mut shape_def_rep_to_shape_rep: HashMap<u64, u64> = HashMap::new();
+        let mut prod_def_shape_to_shape_def_rep: HashMap<u64, u64> = HashMap::new();
+        let mut prod_def_to_prod_def_shape: Vec<(u64, u64)> = Vec::new();
+        let mut prod_def_assembly_occurrences: HashSet<u64> = HashSet::new();
+
+        for entry in entries {
+            let keyword = Self::extract_keyword(entry.get_definition());
+
+            match keyword {
+                "SHAPE_DEFINITION_REPRESENTATION" => {
+                    let shape_def_rep_id = entry.get_id();
+                    let references = entry.get_references();
+                    if references.len() != 2 {
+                        error!(
+                            "SHAPE_DEFINITION_REPRESENTATION entry with id {} has {} references",
+                            shape_def_rep_id,
+                            references.len()
+                        );
+                        continue;
+                    }
+
+                    let prod_def_shape_id = references[0];
+                    let shape_rep_id = references[1];
+
+                    shape_def_rep_to_shape_rep.insert(shape_def_rep_id, shape_rep_id);
+                    prod_def_shape_to_shape_def_rep.insert(prod_def_shape_id, shape_def_rep_id);
+                }
+                "PRODUCT_DEFINITION_SHAPE" => {
+                    let prod_def_shape_id = entry.get_id();
+                    let references = entry.get_references();
+                    if references.is_empty() {
+                        error!(
+                            "PRODUCT_DEFINITION_SHAPE entry with id {} has no references",
+                            prod_def_shape_id,
+                        );
+                        continue;
+                    }
+
+                    let prod_def_id = references.last().unwrap();
+                    prod_def_to_prod_def_shape.push((*prod_def_id, prod_def_shape_id));
+                }
+                "NEXT_ASSEMBLY_USAGE_OCCURRENCE" => {
+                    let references = entry.get_references();
+                    if references.len() != 2 {
+                        error!(
+                            "NEXT_ASSEMBLY_USAGE_OCCURRENCE entry with id {} has {} references",
+                            entry.get_id(),
+                            references.len()
+                        );
+                        continue;
+                    }
+
+                    let prod_def_id = references[1];
+                    prod_def_assembly_occurrences.insert(prod_def_id);
+                }
+                _ => {}
+            }
+        }
+
+        // find all root nodes
+        let mut result = Vec::new();
+        for (prod_def_id, prod_def_shape_id) in prod_def_to_prod_def_shape.iter() {
+            // skip if the product definition is referenced by an assembly occurrence
+            if prod_def_assembly_occurrences.contains(prod_def_id) {
+                continue;
+            }
+
+            // try to find the shape definition representation
+            if let Some(shape_def_rep_id) = prod_def_shape_to_shape_def_rep.get(&prod_def_shape_id)
+            {
+                // try to find the shape representation
+                if let Some(shape_rep_id) = shape_def_rep_to_shape_rep.get(shape_def_rep_id) {
+                    result.push(NodeStepIds {
+                        product_definition_id: *prod_def_id,
+                        shape_representation_id: *shape_rep_id,
+                    });
+                } else {
+                    error!(
+                        "No SHAPE_REPRESENTATION found for SHAPE_DEFINITION_REPRESENTATION {}",
+                        shape_def_rep_id
+                    );
+                }
+            } else {
+                error!(
+                    "No SHAPE_DEFINITION_REPRESENTATION found for PRODUCT_DEFINITION_SHAPE {}",
+                    prod_def_shape_id
+                );
+            }
+        }
+
+        result
+    }
+
+    /// Extracts the keyword from the given definition
+    ///
+    /// # Arguments
+    /// * `definition` - The definition to extract the keyword from.
+    fn extract_keyword(definition: &str) -> &str {
+        let definition = definition.trim();
+
+        // find first character that does not belong to the keyword characters
+        let keyword_end = definition
+            .find(|c: char| !(c >= 'A' && c <= 'Z') && c != '_')
+            .unwrap_or(definition.len());
+        &definition[..keyword_end]
+    }
 }
 
 /// The ids being generated for a node while creating the step data.
@@ -394,6 +582,8 @@ struct NodeStepIds {
 
 #[cfg(test)]
 mod test {
+    use std::str::FromStr;
+
     use super::*;
 
     #[test]
@@ -405,5 +595,49 @@ mod test {
         StepMerger::get_ids_from_mechanical_part(&entry, &mut ids);
 
         assert_eq!(ids, vec![24]);
+    }
+
+    #[test]
+    fn test_extract_keyword() {
+        let s = "PRODUCT_DEFINITION_SHAPE('',#,#);";
+        let keyword = StepMerger::extract_keyword(s);
+
+        assert_eq!(keyword, "PRODUCT_DEFINITION_SHAPE");
+
+        let s = "  FOOBAR_BLUB( );  ";
+        let keyword = StepMerger::extract_keyword(s);
+
+        assert_eq!(keyword, "FOOBAR_BLUB");
+    }
+
+    #[test]
+    fn test_find_root_nodes1() {
+        let source = include_str!("../../../test_data/minimal-structure.stp");
+        let step_data = StepData::from_str(source).unwrap();
+
+        let entries = step_data.get_entries();
+        let root_nodes = StepMerger::find_root_nodes(entries.iter());
+
+        assert_eq!(root_nodes.len(), 2);
+
+        assert_eq!(root_nodes[0].product_definition_id, 14);
+        assert_eq!(root_nodes[0].shape_representation_id, 19);
+
+        assert_eq!(root_nodes[1].product_definition_id, 2014);
+        assert_eq!(root_nodes[1].shape_representation_id, 2019);
+    }
+
+    #[test]
+    fn test_find_root_nodes2() {
+        let source = include_str!("../../../test_data/2-cubes-1-sphere.stp");
+        let step_data = StepData::from_str(source).unwrap();
+
+        let entries = step_data.get_entries();
+        let root_nodes = StepMerger::find_root_nodes(entries.iter());
+
+        assert_eq!(root_nodes.len(), 1);
+
+        assert_eq!(root_nodes[0].product_definition_id, 14);
+        assert_eq!(root_nodes[0].shape_representation_id, 31);
     }
 }
