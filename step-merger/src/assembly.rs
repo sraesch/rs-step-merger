@@ -3,11 +3,22 @@ use std::path::Path;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 
+/// Returns the identity matrix.
+pub const fn identity_matrix() -> [f32; 16] {
+    [
+        1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
 /// A single node in the assembly tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     link: Option<String>,
     label: String,
+
+    // Column-major encoded 4x4 transformation matrix. The default value is the identity matrix.
+    #[serde(default = "identity_matrix")]
+    transform: [f32; 16],
 
     #[serde(default)]
     children: Vec<usize>,
@@ -22,6 +33,7 @@ impl Node {
         Node {
             link: None,
             label: label.to_owned(),
+            transform: identity_matrix(),
             children: Vec::new(),
         }
     }
@@ -56,6 +68,12 @@ impl Node {
     /// Returns the children of the node.
     pub fn get_children(&self) -> &Vec<usize> {
         &self.children
+    }
+
+    /// Returns the transformation matrix of the node.
+    #[inline]
+    pub fn get_transform(&self) -> &[f32; 16] {
+        &self.transform
     }
 }
 
