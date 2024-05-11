@@ -44,30 +44,27 @@ fn run_program() -> Result<()> {
     options.dump_to_log();
     info!("-------");
 
-    info!("Read STEP data...");
+    info!("Read assembly structure...");
     let t = Instant::now();
-    let mut step_data = StepData::from_file(options.input_file)?;
-    info!("Read STEP data...DONE in {} s", t.elapsed().as_secs_f64());
-
-    info!("Range of ids: {:?}", step_data.get_id_range());
-
-    info!("Random update of references...");
-    let t = Instant::now();
-    step_data.update_reference(|x| x + 1000);
+    let assembly: Assembly = step_merger::Assembly::from_file(options.input_file)?;
     info!(
-        "Random update of references...DONE in {} s",
-        t.elapsed().as_secs_f64()
+        "Read assembly structure...DONE in {} ms",
+        t.elapsed().as_millis()
+    );
+
+    info!("Merge assembly structure into step file...");
+    let t = Instant::now();
+    let step_data: StepData =
+        step_merger::merge_assembly_structure_to_step(&assembly, !options.avoid_references)?;
+    info!(
+        "Merge assembly structure into step file...DONE in {} ms",
+        t.elapsed().as_millis()
     );
 
     info!("Write STEP data...");
     let t = Instant::now();
     step_data.to_file(options.output_file)?;
     info!("Write STEP data...DONE in {} s", t.elapsed().as_secs_f64());
-
-    // info!("Read assembly structure...");
-    // let t = Instant::now();
-    // let assembly: Assembly = step_merger::Assembly::from_file(options.input_file)?;
-    // info!("Read assembly structure...DONE in {} ms", t.elapsed().as_millis());
 
     Ok(())
 }

@@ -1,11 +1,14 @@
+mod merger;
 mod reader;
 mod writer;
 
-use std::{fs::File, ops::Range, path::Path};
+use std::{fs::File, ops::Range, path::Path, str::FromStr};
 
 use crate::{Error, Result};
 
 use self::reader::ParsedStep;
+
+pub use merger::*;
 
 /// A single entry in the STEP file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -296,6 +299,27 @@ impl StepData {
     /// Returns the range of the ids in the STEP file.
     pub fn get_id_range(&self) -> Range<u64> {
         self.id_range.clone()
+    }
+}
+
+impl FromStr for StepData {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let parsed_step = ParsedStep::parse(s.as_bytes())?;
+
+        if let ParsedStep::Step(header, body) = parsed_step {
+            let iso_string = header.iso;
+            let implementation_level = header.implementation_level;
+            let protocol = header.protocol;
+
+            let mut step_data = StepData::new(iso_string, implementation_level, protocol);
+            step_data.set_entries(body);
+
+            Ok(step_data)
+        } else {
+            Err(Error::ParsingError("Invalid parsed step".to_owned()))
+        }
     }
 }
 

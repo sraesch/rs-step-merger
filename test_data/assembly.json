@@ -1,15 +1,21 @@
 {
-  "root": {
-    "label": "Root Node",
-    "children": [
-      {
-        "label": "Child 1",
-        "link": "1.stp"
-      },
-      {
-        "label": "Child 2",
-        "link": "2.stp"
-      }
-    ]
-  }
+  "nodes": [
+    {
+      "label": "Root Node",
+      "children": [1, 2]
+    },
+    {
+      "label": "Child 1",
+      "link": "1.stp"
+    },
+    {
+      "label": "Child 2",
+      "link": "2.stp",
+      "children": [3]
+    },
+    {
+      "label": "Leaf Node",
+      "link": "3.stp"
+    }
+  ]
 }
