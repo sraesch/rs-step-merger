@@ -12,6 +12,7 @@ use crate::{
     Assembly, Error, Node, Result,
 };
 
+mod buffered_iterator;
 mod root_nodes;
 mod utils;
 
