@@ -14,9 +14,13 @@ use super::{StepData, StepEntry};
 ///
 /// # Arguments
 /// * `assembly` - The assembly structure to be merged.
-pub fn merge_assembly_structure_to_step(assembly: &Assembly) -> Result<StepData> {
+/// * `load_references` - Flag to indicate if external references should be loaded.
+pub fn merge_assembly_structure_to_step(
+    assembly: &Assembly,
+    load_references: bool,
+) -> Result<StepData> {
     let mut merger = StepMerger::new(assembly);
-    merger.merge()?;
+    merger.merge(load_references)?;
 
     Ok(merger.step_data)
 }
@@ -59,7 +63,10 @@ impl<'a> StepMerger<'a> {
     }
 
     /// Merges the assembly structure into a single monolithic step file.
-    pub fn merge(&mut self) -> Result<()> {
+    ///
+    /// # Arguments
+    /// * `load_references` - Flag to indicate if external references should be loaded.
+    pub fn merge(&mut self, load_references: bool) -> Result<()> {
         info!("Merging assembly structure into step file...");
         self.create_app_context();
 
@@ -99,29 +106,31 @@ impl<'a> StepMerger<'a> {
         }
 
         // load all referenced step files and add them to the current step data
-        let mut reference_map: HashMap<String, Vec<NodeStepIds>> = HashMap::new();
-        for node in self.assembly.nodes.iter() {
-            if let Some(link) = node.get_link() {
-                if !reference_map.contains_key(link) {
-                    let root_nodes = self.load_and_add_step(link)?;
-                    reference_map.insert(link.to_owned(), root_nodes);
+        if load_references {
+            let mut reference_map: HashMap<String, Vec<NodeStepIds>> = HashMap::new();
+            for node in self.assembly.nodes.iter() {
+                if let Some(link) = node.get_link() {
+                    if !reference_map.contains_key(link) {
+                        let root_nodes = self.load_and_add_step(link)?;
+                        reference_map.insert(link.to_owned(), root_nodes);
+                    }
                 }
             }
-        }
 
-        // create the parent-child relations between the assembly nodes and the referenced step
-        // files
-        for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
-            if let Some(link) = node.get_link() {
-                let root_nodes = reference_map.get(link).unwrap();
-                for child_ids in root_nodes.iter() {
-                    self.create_parent_child_relation(
-                        node.get_label(),
-                        node.get_label(),
-                        *node_ids,
-                        *child_ids,
-                        &identity_matrix(),
-                    );
+            // create the parent-child relations between the assembly nodes and the referenced step
+            // files
+            for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
+                if let Some(link) = node.get_link() {
+                    let root_nodes = reference_map.get(link).unwrap();
+                    for child_ids in root_nodes.iter() {
+                        self.create_parent_child_relation(
+                            node.get_label(),
+                            node.get_label(),
+                            *node_ids,
+                            *child_ids,
+                            &identity_matrix(),
+                        );
+                    }
                 }
             }
         }
@@ -219,6 +228,7 @@ impl<'a> StepMerger<'a> {
             // create new entry and update the references
             let mut new_entry = entry.clone();
             new_entry.update_references(update_id);
+            max_id = max_id.max(new_entry.get_id());
 
             // catch special case of MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION
             if definition.starts_with("MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION") {
@@ -227,8 +237,6 @@ impl<'a> StepMerger<'a> {
             } else {
                 self.step_data.add_entry(new_entry);
             }
-
-            max_id = max_id.max(entry.get_id());
         }
 
         // update the id counter to the new max id
@@ -360,8 +368,14 @@ impl<'a> StepMerger<'a> {
         child_ids: NodeStepIds,
         transform: &[f32; 16],
     ) {
+        // determine the position and translate it from meter to millimeter
+        let position = [
+            transform[12] * 1000.0,
+            transform[13] * 1000.0,
+            transform[14] * 1000.0,
+        ];
+
         // extract the position, x-axis and z-axis vector
-        let position = &transform[12..15];
         let x_axis = &transform[0..3];
         let z_axis = &transform[8..11];
 

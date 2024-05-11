@@ -54,7 +54,8 @@ fn run_program() -> Result<()> {
 
     info!("Merge assembly structure into step file...");
     let t = Instant::now();
-    let step_data: StepData = step_merger::merge_assembly_structure_to_step(&assembly)?;
+    let step_data: StepData =
+        step_merger::merge_assembly_structure_to_step(&assembly, !options.avoid_references)?;
     info!(
         "Merge assembly structure into step file...DONE in {} ms",
         t.elapsed().as_millis()
