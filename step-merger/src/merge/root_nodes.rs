@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use log::error;
+use log::{error, warn};
 
 use crate::step::StepEntry;
 
@@ -118,13 +118,13 @@ impl FindRootNodes {
                         shape_representation_id: *shape_rep_id,
                     });
                 } else {
-                    error!(
+                    warn!(
                         "No SHAPE_REPRESENTATION found for SHAPE_DEFINITION_REPRESENTATION {}",
                         shape_def_rep_id
                     );
                 }
             } else {
-                error!(
+                warn!(
                     "No SHAPE_DEFINITION_REPRESENTATION found for PRODUCT_DEFINITION_SHAPE {}",
                     prod_def_shape_id
                 );

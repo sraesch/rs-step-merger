@@ -12,6 +12,8 @@ use crate::{
     Assembly, Error, Node, Result,
 };
 
+use self::buffered_iterator::BufferedIterator;
+
 mod buffered_iterator;
 mod root_nodes;
 mod utils;
@@ -206,10 +208,32 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         let step_data = StepData::from_file(file_path.as_ref())?;
         info!("Load step file {}...DONE", file_path.as_ref().display());
 
-        // find the id for the APPLICATION_CONTEXT entry
-        let app_context_id = step_data
-            .get_entries()
-            .iter()
+        self.load_and_add_step_entries(
+            step_data.get_entries().iter().cloned(),
+            file_path.as_ref().to_string_lossy().as_ref(),
+        )
+    }
+
+    /// Adds the given step file as step entries to the current step data.
+    /// Returns the STEP ids of the root nodes.
+    ///
+    /// # Arguments
+    /// * `entries` - The entries of another step file to be added.
+    /// * `filename` - The name of the step file.
+    fn load_and_add_step_entries<I>(
+        &mut self,
+        entries: I,
+        filename: &str,
+    ) -> Result<Vec<NodeStepIds>>
+    where
+        I: Iterator<Item = StepEntry>,
+    {
+        let mut entries = BufferedIterator::new(entries);
+
+        // Find the id for the APPLICATION_CONTEXT entry.
+        // We use the buffered iterator to reuse the entries.
+        entries.set_buffering_mode();
+        let app_context_id = entries
             .find(|entry| {
                 entry
                     .get_definition()
@@ -220,9 +244,11 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
             .ok_or_else(|| {
                 Error::InvalidFormat(format!(
                     "No APPLICATION_CONTEXT entry found in step file {}",
-                    file_path.as_ref().display()
+                    filename
                 ))
             })?;
+
+        entries.reset();
 
         // define the update function for the ids to elevate all ids and to change the APPLICATION_CONTEXT id
         let id_offset = self.id_counter;
@@ -237,7 +263,7 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         // add the entries to the current step data
         let mut max_id = 0u64;
         let mut find_root_nodes = FindRootNodes::new();
-        for entry in step_data.get_entries() {
+        for entry in entries {
             let definition = entry.get_definition().trim();
 
             // exclude APPLICATION_CONTEXT and APPLICATION_PROTOCOL_DEFINITION
@@ -268,10 +294,7 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         // extract the root nodes from the loaded step data
         let root_nodes = find_root_nodes.get_root_nodes();
         if root_nodes.is_empty() {
-            error!(
-                "No root nodes found in step file {}",
-                file_path.as_ref().display()
-            );
+            error!("No root nodes found in step file {}", filename);
         }
 
         Ok(root_nodes)
