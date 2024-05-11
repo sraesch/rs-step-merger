@@ -346,6 +346,25 @@ impl<'a> StepMerger<'a> {
             start_id + 16
         ));
 
+        // add metadata
+        for metadata in node.get_metadata() {
+            let prop_def_id = self.add_entry(&format!(
+                "PROPERTY_DEFINITION('{}','',#{})",
+                metadata.key, product_definition_id
+            ));
+            let desc_rep_item_id = self.add_entry(&format!(
+                "DESCRIPTIVE_REPRESENTATION_ITEM('{}','{}')",
+                metadata.key, metadata.value
+            ));
+
+            let rep_id = self.add_entry(&format!("REPRESENTATION('',(#{}),$)", desc_rep_item_id));
+
+            self.add_entry(&format!(
+                "PROPERTY_DEFINITION_REPRESENTATION(#{},#{})",
+                prop_def_id, rep_id
+            ));
+        }
+
         NodeStepIds {
             product_definition_id,
             shape_representation_id,

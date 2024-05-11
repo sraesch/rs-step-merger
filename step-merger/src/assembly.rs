@@ -10,11 +10,22 @@ pub const fn identity_matrix() -> [f32; 16] {
     ]
 }
 
+/// A single metadata entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataEntry {
+    pub key: String,
+    pub value: String,
+}
+
 /// A single node in the assembly tree.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     link: Option<String>,
     label: String,
+
+    // Metadata entries associated with the node.
+    #[serde(default)]
+    metadata: Vec<MetadataEntry>,
 
     // Column-major encoded 4x4 transformation matrix. The default value is the identity matrix.
     #[serde(default = "identity_matrix")]
@@ -33,6 +44,7 @@ impl Node {
         Node {
             link: None,
             label: label.to_owned(),
+            metadata: Vec::new(),
             transform: identity_matrix(),
             children: Vec::new(),
         }
@@ -74,6 +86,12 @@ impl Node {
     #[inline]
     pub fn get_transform(&self) -> &[f32; 16] {
         &self.transform
+    }
+
+    /// Returns the metadata
+    #[inline]
+    pub fn get_metadata(&self) -> &[MetadataEntry] {
+        &self.metadata
     }
 }
 
