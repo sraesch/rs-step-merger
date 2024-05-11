@@ -213,8 +213,8 @@ impl<'a> StepMerger<'a> {
         };
 
         // add the entries to the current step data
-        let start_entry_index = self.step_data.get_entries().len();
         let mut max_id = 0u64;
+        let mut find_root_nodes = FindRootNodes::new();
         for entry in step_data.get_entries() {
             let definition = entry.get_definition().trim();
 
@@ -235,6 +235,7 @@ impl<'a> StepMerger<'a> {
                 Self::get_ids_from_mechanical_part(&new_entry, &mut self.mechanical_design_ids);
                 continue;
             } else {
+                find_root_nodes.add_entry(&new_entry);
                 self.step_data.add_entry(new_entry);
             }
         }
@@ -243,8 +244,7 @@ impl<'a> StepMerger<'a> {
         self.id_counter = max_id;
 
         // extract the root nodes from the loaded step data
-        let new_entries = &self.step_data.get_entries()[start_entry_index..];
-        let root_nodes = Self::find_root_nodes(new_entries.iter());
+        let root_nodes = find_root_nodes.get_root_nodes();
 
         Ok(root_nodes)
     }
@@ -473,103 +473,122 @@ impl<'a> StepMerger<'a> {
 
         ids.append(&mut entry_ids);
     }
+}
 
-    /// Finds the root nodes in the given entries.
+/// The ids being generated for a node while creating the step data.
+#[derive(Debug, Clone, Copy)]
+struct NodeStepIds {
+    pub product_definition_id: u64,
+    pub shape_representation_id: u64,
+}
+
+/// The structure to find the root nodes in the step data entries.
+/// We have the following entities:
+/// * PRODUCT_DEFINITION
+/// * SHAPE_REPRESENTATION
+/// * PRODUCT_DEFINITION_SHAPE
+/// * SHAPE_DEFINITION_REPRESENTATION
+/// * NEXT_ASSEMBLY_USAGE_OCCURRENCE
+///
+/// The references between the entities are as follows:
+/// * NEXT_ASSEMBLY_USAGE_OCCURRENCE -> PRODUCT_DEFINITION
+/// * PRODUCT_DEFINITION_SHAPE -> PRODUCT_DEFINITION
+/// * SHAPE_DEFINITION_REPRESENTATION -> SHAPE_REPRESENTATION
+/// * SHAPE_DEFINITION_REPRESENTATION -> PRODUCT_DEFINITION_SHAPE
+///
+/// We are interested to find the root node which is the node that has no parent, i.e. the
+/// product definition where no NEXT_ASSEMBLY_USAGE_OCCURRENCE references it.
+/// We then have to return the SHAPE_REPRESENTATION and PRODUCT_DEFINITION_SHAPE ids.
+#[derive(Default)]
+struct FindRootNodes {
+    shape_def_rep_to_shape_rep: HashMap<u64, u64>,
+    prod_def_shape_to_shape_def_rep: HashMap<u64, u64>,
+    prod_def_to_prod_def_shape: Vec<(u64, u64)>,
+    prod_def_assembly_occurrences: HashSet<u64>,
+}
+
+impl FindRootNodes {
+    /// Creates a new instance.
+    pub fn new() -> Self {
+        FindRootNodes::default()
+    }
+
+    /// Adds the given entry to the internal data structure.
     ///
     /// # Arguments
-    /// * `entries` - The entries to find the root nodes in.
-    fn find_root_nodes<'b, I>(entries: I) -> Vec<NodeStepIds>
-    where
-        I: Iterator<Item = &'b StepEntry>,
-    {
-        // We have the following entities:
-        // * PRODUCT_DEFINITION
-        // * SHAPE_REPRESENTATION
-        // * PRODUCT_DEFINITION_SHAPE
-        // * SHAPE_DEFINITION_REPRESENTATION
-        // * NEXT_ASSEMBLY_USAGE_OCCURRENCE
-        //
-        // The references between the entities are as follows:
-        // * NEXT_ASSEMBLY_USAGE_OCCURRENCE -> PRODUCT_DEFINITION
-        // * PRODUCT_DEFINITION_SHAPE -> PRODUCT_DEFINITION
-        // * SHAPE_DEFINITION_REPRESENTATION -> SHAPE_REPRESENTATION
-        // * SHAPE_DEFINITION_REPRESENTATION -> PRODUCT_DEFINITION_SHAPE
-        //
-        // We are interested to find the root node which is the node that has no parent, i.e. the
-        // product definition where no NEXT_ASSEMBLY_USAGE_OCCURRENCE references it.
-        // We then have to return the SHAPE_REPRESENTATION and PRODUCT_DEFINITION_SHAPE ids.
-        let mut shape_def_rep_to_shape_rep: HashMap<u64, u64> = HashMap::new();
-        let mut prod_def_shape_to_shape_def_rep: HashMap<u64, u64> = HashMap::new();
-        let mut prod_def_to_prod_def_shape: Vec<(u64, u64)> = Vec::new();
-        let mut prod_def_assembly_occurrences: HashSet<u64> = HashSet::new();
+    /// * `entry` - The entry to be added.
+    pub fn add_entry(&mut self, entry: &StepEntry) {
+        let keyword = Self::extract_keyword(entry.get_definition());
 
-        for entry in entries {
-            let keyword = Self::extract_keyword(entry.get_definition());
-
-            match keyword {
-                "SHAPE_DEFINITION_REPRESENTATION" => {
-                    let shape_def_rep_id = entry.get_id();
-                    let references = entry.get_references();
-                    if references.len() != 2 {
-                        error!(
-                            "SHAPE_DEFINITION_REPRESENTATION entry with id {} has {} references",
-                            shape_def_rep_id,
-                            references.len()
-                        );
-                        continue;
-                    }
-
-                    let prod_def_shape_id = references[0];
-                    let shape_rep_id = references[1];
-
-                    shape_def_rep_to_shape_rep.insert(shape_def_rep_id, shape_rep_id);
-                    prod_def_shape_to_shape_def_rep.insert(prod_def_shape_id, shape_def_rep_id);
+        match keyword {
+            "SHAPE_DEFINITION_REPRESENTATION" => {
+                let shape_def_rep_id = entry.get_id();
+                let references = entry.get_references();
+                if references.len() != 2 {
+                    error!(
+                        "SHAPE_DEFINITION_REPRESENTATION entry with id {} has {} references",
+                        shape_def_rep_id,
+                        references.len()
+                    );
+                    return;
                 }
-                "PRODUCT_DEFINITION_SHAPE" => {
-                    let prod_def_shape_id = entry.get_id();
-                    let references = entry.get_references();
-                    if references.is_empty() {
-                        error!(
-                            "PRODUCT_DEFINITION_SHAPE entry with id {} has no references",
-                            prod_def_shape_id,
-                        );
-                        continue;
-                    }
 
-                    let prod_def_id = references.last().unwrap();
-                    prod_def_to_prod_def_shape.push((*prod_def_id, prod_def_shape_id));
-                }
-                "NEXT_ASSEMBLY_USAGE_OCCURRENCE" => {
-                    let references = entry.get_references();
-                    if references.len() != 2 {
-                        error!(
-                            "NEXT_ASSEMBLY_USAGE_OCCURRENCE entry with id {} has {} references",
-                            entry.get_id(),
-                            references.len()
-                        );
-                        continue;
-                    }
+                let prod_def_shape_id = references[0];
+                let shape_rep_id = references[1];
 
-                    let prod_def_id = references[1];
-                    prod_def_assembly_occurrences.insert(prod_def_id);
-                }
-                _ => {}
+                self.shape_def_rep_to_shape_rep
+                    .insert(shape_def_rep_id, shape_rep_id);
+                self.prod_def_shape_to_shape_def_rep
+                    .insert(prod_def_shape_id, shape_def_rep_id);
             }
-        }
+            "PRODUCT_DEFINITION_SHAPE" => {
+                let prod_def_shape_id = entry.get_id();
+                let references = entry.get_references();
+                if references.is_empty() {
+                    error!(
+                        "PRODUCT_DEFINITION_SHAPE entry with id {} has no references",
+                        prod_def_shape_id,
+                    );
+                    return;
+                }
 
-        // find all root nodes
+                let prod_def_id = references.last().unwrap();
+                self.prod_def_to_prod_def_shape
+                    .push((*prod_def_id, prod_def_shape_id));
+            }
+            "NEXT_ASSEMBLY_USAGE_OCCURRENCE" => {
+                let references = entry.get_references();
+                if references.len() != 2 {
+                    error!(
+                        "NEXT_ASSEMBLY_USAGE_OCCURRENCE entry with id {} has {} references",
+                        entry.get_id(),
+                        references.len()
+                    );
+                    return;
+                }
+
+                let prod_def_id = references[1];
+                self.prod_def_assembly_occurrences.insert(prod_def_id);
+            }
+            _ => {}
+        }
+    }
+
+    /// Extracts the root nodes based on the collected entries and returns them
+    pub fn get_root_nodes(&self) -> Vec<NodeStepIds> {
         let mut result = Vec::new();
-        for (prod_def_id, prod_def_shape_id) in prod_def_to_prod_def_shape.iter() {
+        for (prod_def_id, prod_def_shape_id) in self.prod_def_to_prod_def_shape.iter() {
             // skip if the product definition is referenced by an assembly occurrence
-            if prod_def_assembly_occurrences.contains(prod_def_id) {
+            if self.prod_def_assembly_occurrences.contains(prod_def_id) {
                 continue;
             }
 
             // try to find the shape definition representation
-            if let Some(shape_def_rep_id) = prod_def_shape_to_shape_def_rep.get(&prod_def_shape_id)
+            if let Some(shape_def_rep_id) =
+                self.prod_def_shape_to_shape_def_rep.get(prod_def_shape_id)
             {
                 // try to find the shape representation
-                if let Some(shape_rep_id) = shape_def_rep_to_shape_rep.get(shape_def_rep_id) {
+                if let Some(shape_rep_id) = self.shape_def_rep_to_shape_rep.get(shape_def_rep_id) {
                     result.push(NodeStepIds {
                         product_definition_id: *prod_def_id,
                         shape_representation_id: *shape_rep_id,
@@ -606,13 +625,6 @@ impl<'a> StepMerger<'a> {
     }
 }
 
-/// The ids being generated for a node while creating the step data.
-#[derive(Debug, Clone, Copy)]
-struct NodeStepIds {
-    pub product_definition_id: u64,
-    pub shape_representation_id: u64,
-}
-
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -633,12 +645,12 @@ mod test {
     #[test]
     fn test_extract_keyword() {
         let s = "PRODUCT_DEFINITION_SHAPE('',#,#);";
-        let keyword = StepMerger::extract_keyword(s);
+        let keyword = FindRootNodes::extract_keyword(s);
 
         assert_eq!(keyword, "PRODUCT_DEFINITION_SHAPE");
 
         let s = "  FOOBAR_BLUB( );  ";
-        let keyword = StepMerger::extract_keyword(s);
+        let keyword = FindRootNodes::extract_keyword(s);
 
         assert_eq!(keyword, "FOOBAR_BLUB");
     }
@@ -649,7 +661,12 @@ mod test {
         let step_data = StepData::from_str(source).unwrap();
 
         let entries = step_data.get_entries();
-        let root_nodes = StepMerger::find_root_nodes(entries.iter());
+        let mut find_root_nodes = FindRootNodes::new();
+        for entry in entries.iter() {
+            find_root_nodes.add_entry(entry);
+        }
+
+        let root_nodes = find_root_nodes.get_root_nodes();
 
         assert_eq!(root_nodes.len(), 2);
 
@@ -666,7 +683,12 @@ mod test {
         let step_data = StepData::from_str(source).unwrap();
 
         let entries = step_data.get_entries();
-        let root_nodes = StepMerger::find_root_nodes(entries.iter());
+        let mut find_root_nodes = FindRootNodes::new();
+        for entry in entries.iter() {
+            find_root_nodes.add_entry(entry);
+        }
+
+        let root_nodes = find_root_nodes.get_root_nodes();
 
         assert_eq!(root_nodes.len(), 1);
 
