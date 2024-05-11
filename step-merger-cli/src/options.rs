@@ -40,6 +40,10 @@ pub struct Options {
     /// The output file to write the merged step file to
     #[arg(short, long)]
     pub output_file: PathBuf,
+
+    /// Avoid loading references
+    #[arg(short, long)]
+    pub avoid_references: bool,
 }
 
 impl Options {
@@ -48,5 +52,6 @@ impl Options {
         info!("log_level: {:?}", self.log_level);
         info!("input_file: {:?}", self.input_file);
         info!("output_file: {:?}", self.output_file);
+        info!("loading references: {:?}", !self.avoid_references);
     }
 }
