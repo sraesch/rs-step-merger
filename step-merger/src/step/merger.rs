@@ -261,6 +261,12 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
 
         // extract the root nodes from the loaded step data
         let root_nodes = find_root_nodes.get_root_nodes();
+        if root_nodes.is_empty() {
+            error!(
+                "No root nodes found in step file {}",
+                file_path.as_ref().display()
+            );
+        }
 
         Ok(root_nodes)
     }
