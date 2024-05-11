@@ -1,12 +1,16 @@
 mod options;
 
-use std::{io::Write, time::Instant};
+use std::{
+    fs::File,
+    io::{BufWriter, Write},
+    time::Instant,
+};
 
 use anyhow::Result;
 use clap::Parser;
 use log::{error, info, LevelFilter};
 use options::Options;
-use step_merger::{step::StepData, Assembly};
+use step_merger::{merge_assembly_structure_to_step, Assembly};
 
 /// Parses the program arguments and returns None, if no arguments were provided and Some otherwise.
 fn parse_args() -> Result<Options> {
@@ -54,17 +58,12 @@ fn run_program() -> Result<()> {
 
     info!("Merge assembly structure into step file...");
     let t = Instant::now();
-    let step_data: StepData =
-        step_merger::merge_assembly_structure_to_step(&assembly, !options.avoid_references)?;
+    let mut out_file = BufWriter::new(File::create(options.output_file)?);
+    merge_assembly_structure_to_step(&assembly, !options.avoid_references, &mut out_file)?;
     info!(
         "Merge assembly structure into step file...DONE in {} ms",
         t.elapsed().as_millis()
     );
-
-    info!("Write STEP data...");
-    let t = Instant::now();
-    step_data.to_file(options.output_file)?;
-    info!("Write STEP data...DONE in {} s", t.elapsed().as_secs_f64());
 
     Ok(())
 }

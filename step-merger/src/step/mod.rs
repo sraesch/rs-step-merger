@@ -1,4 +1,3 @@
-mod merger;
 mod reader;
 mod writer;
 
@@ -8,7 +7,7 @@ use crate::{Error, Result};
 
 use self::reader::ParsedStep;
 
-pub use merger::*;
+pub use writer::StepWriter;
 
 /// A single entry in the STEP file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
