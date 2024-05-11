@@ -600,7 +600,7 @@ impl<'a> StepMerger<'a> {
 
         // find first character that does not belong to the keyword characters
         let keyword_end = definition
-            .find(|c: char| !(c >= 'A' && c <= 'Z') && c != '_')
+            .find(|c: char| !c.is_ascii_uppercase() && c != '_')
             .unwrap_or(definition.len());
         &definition[..keyword_end]
     }
