@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    io::Write,
     path::Path,
 };
 
@@ -7,28 +8,33 @@ use crate::{identity_matrix, Assembly, Error, Node, Result};
 
 use log::{debug, error, info};
 
-use super::{StepData, StepEntry};
+use super::{writer::StepWriter, StepData, StepEntry};
 
 /// The function consumes the given assembly structure and creates step data consisting of the
-/// given assembly structure
+/// given assembly structure. All created step data is written to the given writer.
 ///
 /// # Arguments
 /// * `assembly` - The assembly structure to be merged.
 /// * `load_references` - Flag to indicate if external references should be loaded.
-pub fn merge_assembly_structure_to_step(
+/// * `writer` - The writer for the merged step file.
+pub fn merge_assembly_structure_to_step<W: Write>(
     assembly: &Assembly,
     load_references: bool,
-) -> Result<StepData> {
-    let mut merger = StepMerger::new(assembly);
+    writer: &mut W,
+) -> Result<()> {
+    let mut merger = StepMerger::new(writer, assembly)?;
     merger.merge(load_references)?;
 
-    Ok(merger.step_data)
+    Ok(())
 }
 
 /// The internal step merge operator
-struct StepMerger<'a> {
+struct StepMerger<'a, 'b, W: Write> {
     /// The assembly structure to be merged.
     assembly: &'a Assembly,
+
+    /// The writer for the merged step file.
+    writer: StepWriter<'b, W>,
 
     /// The id for the step entries.
     default_coordinate_system: u64,
@@ -36,30 +42,27 @@ struct StepMerger<'a> {
     /// The id counter for the step entries.
     id_counter: u64,
 
-    // The serialized step data
-    step_data: StepData,
-
     /// The list of referenced mechanical design entries
     mechanical_design_ids: Vec<u64>,
 }
 
-impl<'a> StepMerger<'a> {
+impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
     /// Creates a new step merger with the given writer and assembly structure.
     ///
     /// # Arguments
     /// * `writer` - The writer for the merged step file.
     /// * `assembly` - The assembly structure to be merged.
-    pub fn new(assembly: &'a Assembly) -> StepMerger<'a> {
+    pub fn new(writer: &'b mut W, assembly: &'a Assembly) -> Result<Self> {
         let protocol = vec!["AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF { 1 0 10303 403 1 1 4 }".to_owned()];
-        let step_data = StepData::new("10303-21".to_owned(), "2;1".to_owned(), protocol);
+        let step_writer = StepWriter::new(writer, "2;1", "", &protocol)?;
 
-        StepMerger {
+        Ok(StepMerger {
             assembly,
+            writer: step_writer,
             default_coordinate_system: 0,
             id_counter: 0,
-            step_data,
             mechanical_design_ids: Vec::new(),
-        }
+        })
     }
 
     /// Merges the assembly structure into a single monolithic step file.
@@ -68,27 +71,26 @@ impl<'a> StepMerger<'a> {
     /// * `load_references` - Flag to indicate if external references should be loaded.
     pub fn merge(&mut self, load_references: bool) -> Result<()> {
         info!("Merging assembly structure into step file...");
-        self.create_app_context();
+        self.create_app_context()?;
 
         // create default coordinate system
-        let coord_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))");
-        self.add_entry("DIRECTION('',(0.,0.,1.))");
-        self.add_entry("DIRECTION('',(1.,0.,0.))");
+        let coord_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))")?;
+        self.add_entry("DIRECTION('',(0.,0.,1.))")?;
+        self.add_entry("DIRECTION('',(1.,0.,0.))")?;
         self.default_coordinate_system = self.add_entry(&format!(
             "AXIS2_PLACEMENT_3D('',#{},#{},#{})",
             coord_id,
             coord_id + 1,
             coord_id + 2
-        ));
+        ))?;
 
         // create the nodes of the assembly structure and collect the node product definition and
         // shape representation ids
-        let node_step_ids: Vec<NodeStepIds> = self
-            .assembly
-            .nodes
-            .iter()
-            .map(|node| self.create_node(node))
-            .collect();
+        let mut node_step_ids: Vec<NodeStepIds> = Vec::with_capacity(self.assembly.nodes.len());
+        for node in self.assembly.nodes.iter() {
+            let node_ids = self.create_node(node)?;
+            node_step_ids.push(node_ids);
+        }
 
         // create the parent-child relations between the assembly nodes
         for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
@@ -101,7 +103,7 @@ impl<'a> StepMerger<'a> {
                     *node_ids,
                     *child_ids,
                     child.get_transform(),
-                );
+                )?;
             }
         }
 
@@ -129,14 +131,14 @@ impl<'a> StepMerger<'a> {
                             *node_ids,
                             *child_ids,
                             &identity_matrix(),
-                        );
+                        )?;
                     }
                 }
             }
         }
 
         debug!("Write mechanical part entries...");
-        self.write_mechanical_part_entries();
+        self.write_mechanical_part_entries()?;
         debug!("Write mechanical part entries...DONE");
 
         Ok(())
@@ -154,24 +156,38 @@ impl<'a> StepMerger<'a> {
     ///
     /// # Arguments
     /// * `definition` - The definition of the entry.
-    #[inline]
-    fn add_entry(&mut self, definition: &str) -> u64 {
+    fn add_entry(&mut self, definition: &str) -> Result<u64> {
         let id = self.get_new_id();
-        self.step_data.add_entry(StepEntry::new(id, definition));
+        let entry = StepEntry::new(id, definition);
 
-        id
+        self.add_entry_full(&entry)?;
+
+        Ok(id)
+    }
+
+    /// Adds a new entry to the step data.
+    ///
+    /// # Arguments
+    /// * `entry` - The entry to be added.
+    #[inline]
+    fn add_entry_full(&mut self, entry: &StepEntry) -> Result<()> {
+        self.writer.write_entry(entry)?;
+
+        Ok(())
     }
 
     /// Creates the application context and protocol definition.
-    fn create_app_context(&mut self) {
+    fn create_app_context(&mut self) -> Result<()> {
         let app_id = self.add_entry(
             "APPLICATION_CONTEXT('Configuration controlled 3D designs of mechanical parts and assemblies')",
-        );
+        )?;
 
         assert_eq!(app_id, 1);
 
         self.add_entry("APPLICATION_PROTOCOL_DEFINITION('international standard', 'configuration_control_3d_design_ed2_mim',2004, #1)",
-        );
+        )?;
+
+        Ok(())
     }
 
     /// Loads the given step file and adds the loaded step data to the current step data.
@@ -232,11 +248,11 @@ impl<'a> StepMerger<'a> {
 
             // catch special case of MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION
             if definition.starts_with("MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION") {
-                Self::get_ids_from_mechanical_part(&new_entry, &mut self.mechanical_design_ids);
+                get_ids_from_mechanical_part(&new_entry, &mut self.mechanical_design_ids);
                 continue;
             } else {
                 find_root_nodes.add_entry(&new_entry);
-                self.step_data.add_entry(new_entry);
+                self.add_entry_full(&new_entry)?;
             }
         }
 
@@ -250,22 +266,22 @@ impl<'a> StepMerger<'a> {
     }
 
     /// Writes the final MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
-    fn write_mechanical_part_entries(&mut self) {
+    fn write_mechanical_part_entries(&mut self) -> Result<()> {
         // write related entries
-        let length = self.add_entry("(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))");
-        let angle_units = self.add_entry("(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))");
+        let length = self.add_entry("(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))")?;
+        let angle_units = self.add_entry("(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))")?;
         self.add_entry(&format!(
             "PLANE_ANGLE_MEASURE_WITH_UNIT(PLANE_ANGLE_MEASURE(1.745329251994E-02),#{})",
             angle_units
-        ));
-        let dim_exp = self.add_entry("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)");
+        ))?;
+        let dim_exp = self.add_entry("DIMENSIONAL_EXPONENTS(0.,0.,0.,0.,0.,0.,0.)")?;
         let angle = self.add_entry(&format!(
             "(CONVERSION_BASED_UNIT('DEGREE',#{})NAMED_UNIT(#101)PLANE_ANGLE_UNIT())",
             dim_exp
-        ));
-        let unit = self.add_entry("(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())");
-        let uncertain = self.add_entry(&format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(10.E-03),#{},'distance_accuracy_value','Confusion accuracy')", length));
-        let full = self.add_entry(&format!("(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{},#{},#{}))REPRESENTATION_CONTEXT('',''))", uncertain, length, angle, unit));
+        ))?;
+        let unit = self.add_entry("(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())")?;
+        let uncertain = self.add_entry(&format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(10.E-03),#{},'distance_accuracy_value','Confusion accuracy')", length))?;
+        let full = self.add_entry(&format!("(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{},#{},#{}))REPRESENTATION_CONTEXT('',''))", uncertain, length, angle, unit))?;
 
         // compile list of referenced ids
         let mut list = String::new();
@@ -282,7 +298,9 @@ impl<'a> StepMerger<'a> {
             list, full
         );
 
-        self.add_entry(&entry);
+        self.add_entry(&entry)?;
+
+        Ok(())
     }
 
     /// Creates a new node in the step data. Returns a tuple consisting of the PRODUCT_DEFINITION
@@ -290,85 +308,86 @@ impl<'a> StepMerger<'a> {
     ///
     /// # Arguments
     /// * `node` - The node to be created.
-    fn create_node(&mut self, node: &Node) -> NodeStepIds {
+    fn create_node(&mut self, node: &Node) -> Result<NodeStepIds> {
         let label = node.get_label();
 
-        let start_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))");
-        self.add_entry("DIRECTION('',(0.,0.,1.))");
-        self.add_entry("DIRECTION('',(1.,0.,0.))");
+        let start_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))")?;
+        self.add_entry("DIRECTION('',(0.,0.,1.))")?;
+        self.add_entry("DIRECTION('',(1.,0.,0.))")?;
         self.add_entry(&format!(
             "AXIS2_PLACEMENT_3D('',#{},#{},#{})",
             start_id,
             start_id + 1,
             start_id + 2
-        ));
+        ))?;
 
-        self.add_entry("(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())");
-        self.add_entry("(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))");
-        self.add_entry("(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))");
+        self.add_entry("(NAMED_UNIT(*)SI_UNIT($,.STERADIAN.)SOLID_ANGLE_UNIT())")?;
+        self.add_entry("(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))")?;
+        self.add_entry("(NAMED_UNIT(*)PLANE_ANGLE_UNIT()SI_UNIT($,.RADIAN.))")?;
 
-        self.add_entry("PRODUCT_CONTEXT('',#1,'mechanical')");
+        self.add_entry("PRODUCT_CONTEXT('',#1,'mechanical')")?;
         self.add_entry(&format!(
             "PRODUCT('{}','{}','',(#{}))",
             label,
             label,
             start_id + 7
-        ));
-        self.add_entry("PRODUCT_DEFINITION_CONTEXT('part_definition',#1,'')");
+        ))?;
+        self.add_entry("PRODUCT_DEFINITION_CONTEXT('part_definition',#1,'')")?;
         self.add_entry(&format!(
             "PRODUCT_DEFINITION_FORMATION('','',#{})",
             start_id + 8
-        ));
+        ))?;
         let product_definition_id = self.add_entry(&format!(
             "PRODUCT_DEFINITION('','',#{},#{})",
             start_id + 10,
             start_id + 9
-        ));
+        ))?;
         self.add_entry(&format!(
             "PRODUCT_DEFINITION_SHAPE('',$,#{})",
             start_id + 11
-        ));
+        ))?;
         self.add_entry(&format!(
             "PRODUCT_RELATED_PRODUCT_CATEGORY('component','',(#{}))",
             start_id + 8
-        ));
-        self.add_entry(&format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(0.1E-12),#{},'distance accuracy value','edge curve and vertex point accuracy')", start_id + 5));
-        self.add_entry(&format!("(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{},#{},#{}))REPRESENTATION_CONTEXT('',''))", start_id + 14, start_id + 5, start_id + 6, start_id + 4));
+        ))?;
+        self.add_entry(&format!("UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(0.1E-12),#{},'distance accuracy value','edge curve and vertex point accuracy')", start_id + 5))?;
+        self.add_entry(&format!("(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{}))GLOBAL_UNIT_ASSIGNED_CONTEXT((#{},#{},#{}))REPRESENTATION_CONTEXT('',''))", start_id + 14, start_id + 5, start_id + 6, start_id + 4))?;
         let shape_representation_id = self.add_entry(&format!(
             "SHAPE_REPRESENTATION('{}',(#{}),#{})",
             label,
             start_id + 3,
             start_id + 15
-        ));
+        ))?;
         self.add_entry(&format!(
             "SHAPE_DEFINITION_REPRESENTATION(#{},#{})",
             start_id + 12,
             start_id + 16
-        ));
+        ))?;
 
         // add metadata
         for metadata in node.get_metadata() {
             let prop_def_id = self.add_entry(&format!(
                 "PROPERTY_DEFINITION('{}','',#{})",
                 metadata.key, product_definition_id
-            ));
+            ))?;
             let desc_rep_item_id = self.add_entry(&format!(
                 "DESCRIPTIVE_REPRESENTATION_ITEM('{}','{}')",
                 metadata.key, metadata.value
-            ));
+            ))?;
 
-            let rep_id = self.add_entry(&format!("REPRESENTATION('',(#{}),$)", desc_rep_item_id));
+            let rep_id =
+                self.add_entry(&format!("REPRESENTATION('',(#{}),$)", desc_rep_item_id))?;
 
             self.add_entry(&format!(
                 "PROPERTY_DEFINITION_REPRESENTATION(#{},#{})",
                 prop_def_id, rep_id
-            ));
+            ))?;
         }
 
-        NodeStepIds {
+        Ok(NodeStepIds {
             product_definition_id,
             shape_representation_id,
-        }
+        })
     }
 
     /// Creates a parent-child relation between the given parent and child node.
@@ -386,7 +405,7 @@ impl<'a> StepMerger<'a> {
         parent_ids: NodeStepIds,
         child_ids: NodeStepIds,
         transform: &[f32; 16],
-    ) {
+    ) -> Result<()> {
         // determine the position and translate it from meter to millimeter
         let position = [
             transform[12] * 1000.0,
@@ -401,26 +420,26 @@ impl<'a> StepMerger<'a> {
         let start_id = self.add_entry(&format!(
             "CARTESIAN_POINT('',({},{},{}))",
             position[0], position[1], position[2],
-        ));
+        ))?;
         self.add_entry(&format!(
             "DIRECTION('',({},{},{}))",
             z_axis[0], z_axis[1], z_axis[2]
-        ));
+        ))?;
         self.add_entry(&format!(
             "DIRECTION('',({},{},{}))",
             x_axis[0], x_axis[1], x_axis[2]
-        ));
+        ))?;
         self.add_entry(&format!(
             "AXIS2_PLACEMENT_3D('',#{},#{},#{})",
             start_id,
             start_id + 1,
             start_id + 2
-        ));
+        ))?;
         self.add_entry(&format!(
             "ITEM_DEFINED_TRANSFORMATION('','',#{},#{})",
             self.default_coordinate_system,
             start_id + 3
-        ));
+        ))?;
         self.add_entry(&format!(
             "(REPRESENTATION_RELATIONSHIP('Child > Parent','{} > {}',#{}, #{})REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#{})SHAPE_REPRESENTATION_RELATIONSHIP())",
             child_label,
@@ -428,7 +447,7 @@ impl<'a> StepMerger<'a> {
             child_ids.shape_representation_id,
             parent_ids.shape_representation_id,
             start_id + 4
-        ));
+        ))?;
         self.add_entry(&format!(
             "NEXT_ASSEMBLY_USAGE_OCCURRENCE('{}','','{}',#{},#{},'{}')",
             child_label,
@@ -436,43 +455,47 @@ impl<'a> StepMerger<'a> {
             parent_ids.product_definition_id,
             child_ids.product_definition_id,
             child_label,
-        ));
+        ))?;
 
         self.add_entry(&format!(
             "PRODUCT_DEFINITION_SHAPE('{}',$,#{})",
             child_label,
             start_id + 6
-        ));
+        ))?;
 
         self.add_entry(&format!(
             "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#{},#{})",
             start_id + 5,
             start_id + 7
-        ));
+        ))?;
+
+        Ok(())
     }
+}
 
-    /// Extracts all ids for the items defined in MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
-    ///
-    /// # Arguments
-    /// * `entry` - The MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
-    /// * `ids` - The list of ids where the extracted ids are added.
-    fn get_ids_from_mechanical_part(entry: &StepEntry, ids: &mut Vec<u64>) {
-        let mut entry_ids = entry.get_references();
-        if entry_ids.is_empty() {
-            error!("No references found in MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry");
-            return;
-        } else {
-            entry_ids.pop();
-        }
-
-        debug!(
-            "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION got id {} and has {} ids",
-            entry.get_id(),
-            entry_ids.len()
+/// Extracts all ids for the items defined in MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
+///
+/// # Arguments
+/// * `entry` - The MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry.
+/// * `ids` - The list of ids where the extracted ids are added.
+fn get_ids_from_mechanical_part(entry: &StepEntry, ids: &mut Vec<u64>) {
+    let mut entry_ids = entry.get_references();
+    if entry_ids.is_empty() {
+        error!(
+            "No references found in MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION entry"
         );
-
-        ids.append(&mut entry_ids);
+        return;
+    } else {
+        entry_ids.pop();
     }
+
+    debug!(
+        "MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION got id {} and has {} ids",
+        entry.get_id(),
+        entry_ids.len()
+    );
+
+    ids.append(&mut entry_ids);
 }
 
 /// The ids being generated for a node while creating the step data.
@@ -637,7 +660,7 @@ mod test {
         let entry = StepEntry::new(1, s);
         let mut ids = Vec::new();
 
-        StepMerger::get_ids_from_mechanical_part(&entry, &mut ids);
+        get_ids_from_mechanical_part(&entry, &mut ids);
 
         assert_eq!(ids, vec![24]);
     }
