@@ -149,6 +149,10 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         self.write_mechanical_part_entries()?;
         debug!("Write mechanical part entries...DONE");
 
+        info!("Finalize step file...");
+        self.writer.finalize()?;
+        info!("Finalize step file...DONE");
+
         Ok(())
     }
 
