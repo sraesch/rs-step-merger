@@ -406,8 +406,8 @@ impl<'a> StepMerger<'a> {
             "(REPRESENTATION_RELATIONSHIP('Child > Parent','{} > {}',#{}, #{})REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#{})SHAPE_REPRESENTATION_RELATIONSHIP())",
             child_label,
             parent_label,
-            parent_ids.shape_representation_id,
             child_ids.shape_representation_id,
+            parent_ids.shape_representation_id,
             start_id + 4
         ));
         self.add_entry(&format!(
