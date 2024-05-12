@@ -1,5 +1,6 @@
 mod reader;
 mod writer;
+mod parser;
 
 use std::{fs::File, ops::Range, path::Path, str::FromStr};
 
