@@ -27,23 +27,6 @@ impl<'a, R: Read> CharReader<'a, R> {
         }
     }
 
-    /// Reads the next character from the buffer and returns none if the reader is at the end.
-    pub fn read(&mut self) -> Result<Option<char>> {
-        loop {
-            // If there are characters left in the buffer, read them.
-            if self.pos < self.buffer.len() {
-                let ch = self.buffer[self.pos];
-                self.pos += 1;
-
-                return Ok(Some(ch));
-            }
-
-            if !self.refresh_buffer()? {
-                return Ok(None);
-            }
-        }
-    }
-
     /// Refreshes the buffer by reading a new line from the reader.
     /// Returns true if a new line was read, false if the reader is at the end.
     fn refresh_buffer(&mut self) -> Result<bool> {
@@ -62,6 +45,28 @@ impl<'a, R: Read> CharReader<'a, R> {
     }
 }
 
+impl<'a, R: Read> Iterator for CharReader<'a, R> {
+    type Item = Result<char>;
+
+    fn next(&mut self) -> Option<Result<char>> {
+        loop {
+            // If there are characters left in the buffer, read them.
+            if self.pos < self.buffer.len() {
+                let ch = self.buffer[self.pos];
+                self.pos += 1;
+
+                return Some(Ok(ch));
+            }
+
+            match self.refresh_buffer() {
+                Ok(true) => {}
+                Ok(false) => return None,
+                Err(err) => return Some(Err(err)),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::io::Cursor;
@@ -72,40 +77,40 @@ mod test {
     fn test_char_reading() {
         let mut reader = Cursor::new("Hello, World!".as_bytes());
         let mut reader = CharReader::new(&mut reader);
-        assert_eq!(reader.read().unwrap(), Some('H'));
-        assert_eq!(reader.read().unwrap(), Some('e'));
-        assert_eq!(reader.read().unwrap(), Some('l'));
-        assert_eq!(reader.read().unwrap(), Some('l'));
-        assert_eq!(reader.read().unwrap(), Some('o'));
-        assert_eq!(reader.read().unwrap(), Some(','));
-        assert_eq!(reader.read().unwrap(), Some(' '));
-        assert_eq!(reader.read().unwrap(), Some('W'));
-        assert_eq!(reader.read().unwrap(), Some('o'));
-        assert_eq!(reader.read().unwrap(), Some('r'));
-        assert_eq!(reader.read().unwrap(), Some('l'));
-        assert_eq!(reader.read().unwrap(), Some('d'));
-        assert_eq!(reader.read().unwrap(), Some('!'));
-        assert_eq!(reader.read().unwrap(), None);
+        assert_eq!(reader.next().unwrap().unwrap(), 'H');
+        assert_eq!(reader.next().unwrap().unwrap(), 'e');
+        assert_eq!(reader.next().unwrap().unwrap(), 'l');
+        assert_eq!(reader.next().unwrap().unwrap(), 'l');
+        assert_eq!(reader.next().unwrap().unwrap(), 'o');
+        assert_eq!(reader.next().unwrap().unwrap(), ',');
+        assert_eq!(reader.next().unwrap().unwrap(), ' ');
+        assert_eq!(reader.next().unwrap().unwrap(), 'W');
+        assert_eq!(reader.next().unwrap().unwrap(), 'o');
+        assert_eq!(reader.next().unwrap().unwrap(), 'r');
+        assert_eq!(reader.next().unwrap().unwrap(), 'l');
+        assert_eq!(reader.next().unwrap().unwrap(), 'd');
+        assert_eq!(reader.next().unwrap().unwrap(), '!');
+        assert!(reader.next().is_none());
     }
 
     #[test]
     fn test_char_reading_newline() {
         let mut reader = Cursor::new("Hello,\n\nWorld!".as_bytes());
         let mut reader = CharReader::new(&mut reader);
-        assert_eq!(reader.read().unwrap(), Some('H'));
-        assert_eq!(reader.read().unwrap(), Some('e'));
-        assert_eq!(reader.read().unwrap(), Some('l'));
-        assert_eq!(reader.read().unwrap(), Some('l'));
-        assert_eq!(reader.read().unwrap(), Some('o'));
-        assert_eq!(reader.read().unwrap(), Some(','));
-        assert_eq!(reader.read().unwrap(), Some('\n'));
-        assert_eq!(reader.read().unwrap(), Some('\n'));
-        assert_eq!(reader.read().unwrap(), Some('W'));
-        assert_eq!(reader.read().unwrap(), Some('o'));
-        assert_eq!(reader.read().unwrap(), Some('r'));
-        assert_eq!(reader.read().unwrap(), Some('l'));
-        assert_eq!(reader.read().unwrap(), Some('d'));
-        assert_eq!(reader.read().unwrap(), Some('!'));
-        assert_eq!(reader.read().unwrap(), None);
+        assert_eq!(reader.next().unwrap().unwrap(), 'H');
+        assert_eq!(reader.next().unwrap().unwrap(), 'e');
+        assert_eq!(reader.next().unwrap().unwrap(), 'l');
+        assert_eq!(reader.next().unwrap().unwrap(), 'l');
+        assert_eq!(reader.next().unwrap().unwrap(), 'o');
+        assert_eq!(reader.next().unwrap().unwrap(), ',');
+        assert_eq!(reader.next().unwrap().unwrap(), '\n');
+        assert_eq!(reader.next().unwrap().unwrap(), '\n');
+        assert_eq!(reader.next().unwrap().unwrap(), 'W');
+        assert_eq!(reader.next().unwrap().unwrap(), 'o');
+        assert_eq!(reader.next().unwrap().unwrap(), 'r');
+        assert_eq!(reader.next().unwrap().unwrap(), 'l');
+        assert_eq!(reader.next().unwrap().unwrap(), 'd');
+        assert_eq!(reader.next().unwrap().unwrap(), '!');
+        assert!(reader.next().is_none());
     }
 }
