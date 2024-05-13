@@ -11,9 +11,8 @@ use crate::Result;
 /// * `step` - The step data to write.
 /// * `filename` - The filename string to set in the header.
 pub fn write_step<W: Write>(writer: &mut W, step: &StepData, filename: &str) -> Result<()> {
-    let implementation_level = step.get_implementation_level();
-    let protocol = step.get_protocol();
-    let mut step_writer = StepWriter::new(writer, implementation_level, filename, protocol)?;
+    let protocol = vec!["AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF { 1 0 10303 403 1 1 4 }".to_owned()];
+    let mut step_writer = StepWriter::new(writer, "2;1", filename, &protocol)?;
 
     for entry in step.get_entries() {
         step_writer.write_entry(entry)?;

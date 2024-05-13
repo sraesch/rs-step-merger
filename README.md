@@ -23,7 +23,7 @@ This will consume the assembly structure being defined in `one-cube.json` and ge
 
 ### Debugging in Neo4J
 In order to visualize the elements and their relations inside a single STEP file, I've created a debugging scenario that uses Neo4J to visualize the elements and their relations.
-In order to run the debugging scenario for Neo4J, first start the Neo4J server by running the `run_neo4j.sh` script. For that you'll require docker.
+To run the debugging scenario for Neo4J, first start the Neo4J server by running the `run_neo4j.sh` script. For that you'll require docker.
 Afterwards, you can feed the STEP file into the Neo4J database by running the following command:
 ```bash
 ./target/debug/step-export-neo4j -i test_data/cube.stp -u neo4j -p 1234and5

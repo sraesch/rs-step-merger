@@ -28,6 +28,22 @@ impl<P: Iterator<Item = Result<char>>> WhitespaceParser<P> {
         }
     }
 
+    /// Converts the parser to a string.
+    pub fn convert_to_string(self) -> String {
+        let mut result = String::new();
+
+        for token in self {
+            match token {
+                Ok(Token::Whitespace) => result.push('\n'),
+                Ok(Token::Comment) => result.push_str("/**/"),
+                Ok(Token::Character(ch)) => result.push(ch),
+                Err(err) => panic!("Error: {}\n", err),
+            }
+        }
+
+        result
+    }
+
     /// Skips until the predicate is not true anymore.
     /// Returns an error if the end of the input is reached.
     ///
@@ -125,6 +141,10 @@ impl<P: Iterator<Item = Result<char>>> Iterator for WhitespaceParser<P> {
 
 #[cfg(test)]
 mod test {
+    use std::io::Cursor;
+
+    use crate::step::parser::char_parser::CharReader;
+
     use super::*;
 
     #[test]
@@ -253,5 +273,15 @@ ENDSEC;
         for (cleaned_line, resulting_line) in cleaned_lines.iter().zip(resulting_lines.iter()) {
             assert_eq!(cleaned_line.trim(), *resulting_line);
         }
+    }
+
+    #[test]
+    fn test_whitespace_parser_complex2() {
+        let mut input = Cursor::new(include_bytes!("../../../../test_data/wiki.stp"));
+        let char_reader = CharReader::new(&mut input);
+        let parser = WhitespaceParser::new(char_reader);
+
+        let output = include_str!("../../../../test_data/wiki-normalized.stp");
+        assert_eq!(output, parser.convert_to_string());
     }
 }

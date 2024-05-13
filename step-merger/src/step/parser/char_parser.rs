@@ -3,9 +3,9 @@ use std::io::{BufRead, BufReader, Read};
 use crate::Result;
 
 /// A character reader that reads from a buffer.
-pub struct CharReader<'a, R: Read> {
+pub struct CharReader<R: Read> {
     /// The reader to read from.
-    reader: BufReader<&'a mut R>,
+    reader: BufReader<R>,
 
     /// The characters that are currently in the buffer.
     buffer: Vec<char>,
@@ -14,12 +14,12 @@ pub struct CharReader<'a, R: Read> {
     pos: usize,
 }
 
-impl<'a, R: Read> CharReader<'a, R> {
+impl<R: Read> CharReader<R> {
     /// Creates a new character reader from a reader.
     ///
     /// # Arguments
     /// * `reader` - The reader to read from.
-    pub fn new(reader: &'a mut R) -> Self {
+    pub fn new(reader: R) -> Self {
         CharReader {
             reader: BufReader::new(reader),
             buffer: Vec::new(),
@@ -45,7 +45,7 @@ impl<'a, R: Read> CharReader<'a, R> {
     }
 }
 
-impl<'a, R: Read> Iterator for CharReader<'a, R> {
+impl<R: Read> Iterator for CharReader<R> {
     type Item = Result<char>;
 
     fn next(&mut self) -> Option<Result<char>> {

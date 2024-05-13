@@ -1,13 +1,11 @@
-mod reader;
-mod writer;
 mod parser;
+mod writer;
 
-use std::{fs::File, ops::Range, path::Path, str::FromStr};
+use std::{fs::File, io::Cursor, ops::Range, path::Path, str::FromStr};
 
 use crate::{Error, Result};
 
-use self::reader::ParsedStep;
-
+pub use parser::STEPParser;
 pub use writer::StepWriter;
 
 /// A single entry in the STEP file.
@@ -156,15 +154,6 @@ impl StepEntry {
 
 /// The data of a STEP file.
 pub struct StepData {
-    /// The ISO string of the STEP file.
-    iso: String,
-
-    /// The implementation level of the STEP file.
-    implementation_level: String,
-
-    /// A list of the protocols used in the STEP file.
-    protocol: Vec<String>,
-
     /// The entries in the STEP file.
     entries: Vec<StepEntry>,
 
@@ -174,16 +163,8 @@ pub struct StepData {
 
 impl StepData {
     /// Creates a new step data with the given ISO string.
-    ///
-    /// # Arguments
-    /// * `iso` - The ISO string of the STEP file.
-    /// * `implementation_level` - The implementation level of the STEP file.
-    /// * `protocol` - A list of the protocols used in the STEP file.
-    pub fn new(iso: String, implementation_level: String, protocol: Vec<String>) -> StepData {
+    pub fn new() -> StepData {
         StepData {
-            iso,
-            implementation_level,
-            protocol,
             entries: Vec::new(),
             id_range: 0..0,
         }
@@ -194,23 +175,17 @@ impl StepData {
     /// # Arguments
     /// * `path` - The path to the STEP file.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<StepData> {
-        let parsed_step = {
-            let file = File::open(path)?;
-            ParsedStep::parse(file)?
-        };
+        let step_parser = STEPParser::new(File::open(path)?)?;
 
-        if let ParsedStep::Step(header, body) = parsed_step {
-            let iso_string = header.iso;
-            let implementation_level = header.implementation_level;
-            let protocol = header.protocol;
-
-            let mut step_data = StepData::new(iso_string, implementation_level, protocol);
-            step_data.set_entries(body);
-
-            Ok(step_data)
-        } else {
-            Err(Error::ParsingError("Invalid parsed step".to_owned()))
+        let mut entries = Vec::new();
+        for entry in step_parser {
+            entries.push(entry?);
         }
+
+        let mut step_data = StepData::new();
+        step_data.set_entries(entries);
+
+        Ok(step_data)
     }
 
     /// Writes the step data to the given file.
@@ -276,21 +251,6 @@ impl StepData {
         }
     }
 
-    /// Returns the ISO string of the STEP file.
-    pub fn get_iso(&self) -> &str {
-        &self.iso
-    }
-
-    /// Returns the implementation string.
-    pub fn get_implementation_level(&self) -> &str {
-        &self.implementation_level
-    }
-
-    /// Returns the protocol list.
-    pub fn get_protocol(&self) -> &[String] {
-        &self.protocol
-    }
-
     /// Returns the entries in the STEP file.
     pub fn get_entries(&self) -> &[StepEntry] {
         &self.entries
@@ -306,20 +266,18 @@ impl FromStr for StepData {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let parsed_step = ParsedStep::parse(s.as_bytes())?;
+        let reader = Cursor::new(s.as_bytes());
+        let parsed_step = STEPParser::new(reader)?;
 
-        if let ParsedStep::Step(header, body) = parsed_step {
-            let iso_string = header.iso;
-            let implementation_level = header.implementation_level;
-            let protocol = header.protocol;
-
-            let mut step_data = StepData::new(iso_string, implementation_level, protocol);
-            step_data.set_entries(body);
-
-            Ok(step_data)
-        } else {
-            Err(Error::ParsingError("Invalid parsed step".to_owned()))
+        let mut entries = Vec::new();
+        for entry in parsed_step {
+            entries.push(entry?);
         }
+
+        let mut step_data = StepData::new();
+        step_data.set_entries(entries);
+
+        Ok(step_data)
     }
 }
 
@@ -329,7 +287,7 @@ mod test {
 
     #[test]
     fn test_ranges() {
-        let mut step_data = StepData::new("".to_owned(), "".to_owned(), Vec::new());
+        let mut step_data = StepData::new();
 
         assert_eq!(step_data.get_id_range(), 0..0);
 
