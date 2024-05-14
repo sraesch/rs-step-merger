@@ -2,7 +2,7 @@ use quick_error::quick_error;
 use std::io;
 
 quick_error! {
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub enum Error {
         IO(err: String) {
             display("{}", err)
