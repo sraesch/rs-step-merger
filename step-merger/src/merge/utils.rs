@@ -1,4 +1,4 @@
-use log::{debug, error};
+use log::{debug, error, trace};
 
 use crate::step::StepEntry;
 
@@ -30,6 +30,7 @@ pub fn get_ids_from_mechanical_part(entry: &StepEntry, ids: &mut Vec<u64>) {
         entry.get_id(),
         entry_ids.len()
     );
+    trace!("ids: {:?}", entry_ids);
 
     ids.append(&mut entry_ids);
 }
