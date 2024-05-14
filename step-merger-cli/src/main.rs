@@ -44,6 +44,9 @@ fn run_program() -> Result<()> {
     let options = parse_args()?;
     initialize_logging(LevelFilter::from(options.log_level));
 
+    info!("Version: {}", env!("CARGO_PKG_VERSION"));
+    info!("Git hash: {}", env!("GIT_HASH"));
+
     info!("Options:");
     options.dump_to_log();
     info!("-------");
