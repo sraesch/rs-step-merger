@@ -36,39 +36,5 @@ pub fn lexer_logos_bench(c: &mut Criterion) {
     });
 }
 
-pub fn lexer_bench_iter(c: &mut Criterion) {
-    use step_merger::step::lexer_chumsky::Token;
-    let filename = "../test_data/2.stp";
-    let s = fs::read_to_string(filename).unwrap();
-
-    // Benchmark calculating the number of tokens in file 2.stp
-    c.bench_function("Count 2.stp", |b| {
-        b.iter(|| Token::lexer_iter().count().parse(&s))
-    });
-    // Benchmark calculating the maximum of references
-    c.bench_function("References 2.stp", |b| {
-        b.iter(|| {
-            let (tokens, _) = Token::lexer().parse(&s).into_output_errors();
-            let _k = tokens
-                .unwrap()
-                .into_iter()
-                .filter_map(|t| {
-                    if let Token::Reference(v) = t.v {
-                        Some(v)
-                    } else {
-                        None
-                    }
-                })
-                .max()
-                .unwrap();
-        })
-    });
-}
-
-criterion_group!(
-    benches,
-    lexer_chumsky_bench,
-    lexer_logos_bench,
-    lexer_bench_iter
-);
+criterion_group!(benches, lexer_chumsky_bench, lexer_logos_bench,);
 criterion_main!(benches);

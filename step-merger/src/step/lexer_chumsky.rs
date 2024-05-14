@@ -111,12 +111,10 @@ pub enum Token<'src> {
     Endsec,
     String(&'src str),
     Identifier(&'src str),
-    Integer(isize),
+    Integer(&'src str),
     Float(&'src str),
-    Reference(usize),
     Sym(Symbol),
     Comment(&'src str),
-    Enum(&'src str),
     StartTag,
     EndTag,
 }
@@ -131,12 +129,10 @@ impl fmt::Display for Token<'_> {
             Token::Identifier(i) => write!(f, "{i}"),
             Token::Integer(n) => write!(f, "{n}"),
             Token::Float(n) => write!(f, "{n}"),
-            Token::Reference(r) => write!(f, "#{r}"),
             Token::Sym(s) => write!(f, "{s}"),
             Token::Comment(c) => write!(f, "/*{c}*/"),
             Token::StartTag => write!(f, "ISO-10303-21"),
             Token::EndTag => write!(f, "END-ISO-10303-21"),
-            Token::Enum(s) => write!(f, ".{s}."),
         }
     }
 }
@@ -145,10 +141,8 @@ impl<'src> Token<'src> {
     fn parser<E: ParserExtra<'src, &'src str>>(
     ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
         choice((
-            Self::parse_enum(),
             Self::parse_float(),
             Self::parse_integer_token(),
-            Self::parse_reference(),
             Self::step_identifier(),
             Symbol::parse_symbol().map(Self::Sym),
             Self::parse_string(),
@@ -189,22 +183,7 @@ impl<'src> Token<'src> {
 
     fn parse_integer_token<E: ParserExtra<'src, &'src str>>(
     ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
-        Self::parse_signed_integer().map(|n: &str| Self::Integer(n.parse::<isize>().unwrap()))
-    }
-
-    fn parse_reference<E: ParserExtra<'src, &'src str>>(
-    ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
-        just("#")
-            .ignore_then(Self::parse_integer())
-            .map(|s: &str| Self::Reference(s.parse::<usize>().unwrap()))
-    }
-
-    fn parse_enum<E: ParserExtra<'src, &'src str>>(
-    ) -> impl Parser<'src, &'src str, Token<'src>, E> + Copy {
-        just(".")
-            .ignore_then(Self::step_identifier().to_slice())
-            .then_ignore(just("."))
-            .map(|s: &str| Self::Enum(s))
+        Self::parse_signed_integer().map(|n: &str| Self::Integer(n))
     }
 
     fn step_identifier<E: ParserExtra<'src, &'src str>>(
@@ -282,12 +261,6 @@ mod test {
     }
 
     #[test]
-    fn test_enum() {
-        run_test(".TEST.", vec![(Token::Enum("TEST"), 0..6).into()]);
-        run_test(".TRUE.", vec![(Token::Enum("TRUE"), 0..6).into()]);
-    }
-
-    #[test]
     fn test_identifier() {
         run_test(
             "ISO-42424242",
@@ -301,27 +274,12 @@ mod test {
 
     #[test]
     fn test_numbers() {
-        run_test("1234", vec![(Token::Integer(1234), 0..4).into()]);
-        run_test("-1234", vec![(Token::Integer(-1234), 0..5).into()]);
+        run_test("1234", vec![(Token::Integer("1234"), 0..4).into()]);
+        run_test("-1234", vec![(Token::Integer("-1234"), 0..5).into()]);
         run_test("-1234.42", vec![(Token::Float("-1234.42"), 0..8).into()]);
         run_test(
             "-1234.42e44",
             vec![(Token::Float("-1234.42e44"), 0..11).into()],
-        );
-    }
-
-    #[test]
-    fn test_references() {
-        run_test("#42", vec![(Token::Reference(42), 0..3).into()]);
-        run_test(
-            "#42 ; #44=HELLO_WORLD",
-            vec![
-                (Token::Reference(42), 0..3).into(),
-                (Token::Sym(Symbol::Sem), 4..5).into(),
-                (Token::Reference(44), 6..9).into(),
-                (Token::Sym(Symbol::Eq), 9..10).into(),
-                (Token::Identifier("HELLO_WORLD"), 10..21).into(),
-            ],
         );
     }
 
@@ -395,7 +353,8 @@ mod test {
                     (Sym(Sem), 434..435).into(),
                     (Data, 436..440).into(),
                     (Sym(Sem), 440..441).into(),
-                    (Reference(10), 442..445).into(),
+                    (Sym(Hash), 442..443).into(),
+                    (Integer("10"), 443..445).into(),
                     (Sym(Eq), 445..446).into(),
                     (Identifier("ORGANIZATION"), 446..458).into(),
                     (Sym(BrO), 458..459).into(),
@@ -406,25 +365,29 @@ mod test {
                     (String("company"), 476..485).into(),
                     (Sym(BrC), 485..486).into(),
                     (Sym(Sem), 486..487).into(),
-                    (Reference(11), 488..491).into(),
+                    (Sym(Hash), 488..489).into(),
+                    (Integer("11"), 489..491).into(),
                     (Sym(Eq), 491..492).into(),
                     (Identifier("PRODUCT_DEFINITION_CONTEXT"), 492..518).into(),
                     (Sym(BrO), 518..519).into(),
                     (String("part definition"), 519..536).into(),
                     (Sym(Com), 536..537).into(),
-                    (Reference(12), 537..540).into(),
+                    (Sym(Hash), 537..538).into(),
+                    (Integer("12"), 538..540).into(),
                     (Sym(Com), 540..541).into(),
                     (String("manufacturing"), 541..556).into(),
                     (Sym(BrC), 556..557).into(),
                     (Sym(Sem), 557..558).into(),
-                    (Reference(12), 559..562).into(),
+                    (Sym(Hash), 559..560).into(),
+                    (Integer("12"), 560..562).into(),
                     (Sym(Eq), 562..563).into(),
                     (Identifier("APPLICATION_CONTEXT"), 563..582).into(),
                     (Sym(BrO), 582..583).into(),
                     (String("mechanical design"), 583..602).into(),
                     (Sym(BrC), 602..603).into(),
                     (Sym(Sem), 603..604).into(),
-                    (Reference(13), 605..608).into(),
+                    (Sym(Hash), 605..606).into(),
+                    (Integer("13"), 606..608).into(),
                     (Sym(Eq), 608..609).into(),
                     (Identifier("APPLICATION_PROTOCOL_DEFINITION"), 609..640).into(),
                     (Sym(BrO), 640..641).into(),
@@ -432,12 +395,14 @@ mod test {
                     (Sym(Com), 643..644).into(),
                     (String("automotive_design"), 644..663).into(),
                     (Sym(Com), 663..664).into(),
-                    (Integer(2003), 664..668).into(),
+                    (Integer("2003"), 664..668).into(),
                     (Sym(Com), 668..669).into(),
-                    (Reference(12), 669..672).into(),
+                    (Sym(Hash), 669..670).into(),
+                    (Integer("12"), 670..672).into(),
                     (Sym(BrC), 672..673).into(),
                     (Sym(Sem), 673..674).into(),
-                    (Reference(14), 675..678).into(),
+                    (Sym(Hash), 675..676).into(),
+                    (Integer("14"), 676..678).into(),
                     (Sym(Eq), 678..679).into(),
                     (Identifier("PRODUCT_DEFINITION"), 679..697).into(),
                     (Sym(BrO), 697..698).into(),
@@ -445,12 +410,15 @@ mod test {
                     (Sym(Com), 701..702).into(),
                     (Sym(Dol), 702..703).into(),
                     (Sym(Com), 703..704).into(),
-                    (Reference(15), 704..707).into(),
+                    (Sym(Hash), 704..705).into(),
+                    (Integer("15"), 705..707).into(),
                     (Sym(Com), 707..708).into(),
-                    (Reference(11), 708..711).into(),
+                    (Sym(Hash), 708..709).into(),
+                    (Integer("11"), 709..711).into(),
                     (Sym(BrC), 711..712).into(),
                     (Sym(Sem), 712..713).into(),
-                    (Reference(15), 714..717).into(),
+                    (Sym(Hash), 714..715).into(),
+                    (Integer("15"), 715..717).into(),
                     (Sym(Eq), 717..718).into(),
                     (Identifier("PRODUCT_DEFINITION_FORMATION"), 718..746).into(),
                     (Sym(BrO), 746..747).into(),
@@ -458,10 +426,12 @@ mod test {
                     (Sym(Com), 750..751).into(),
                     (Sym(Dol), 751..752).into(),
                     (Sym(Com), 752..753).into(),
-                    (Reference(16), 753..756).into(),
+                    (Sym(Hash), 753..754).into(),
+                    (Integer("16"), 754..756).into(),
                     (Sym(BrC), 756..757).into(),
                     (Sym(Sem), 757..758).into(),
-                    (Reference(16), 759..762).into(),
+                    (Sym(Hash), 759..760).into(),
+                    (Integer("16"), 760..762).into(),
                     (Sym(Eq), 762..763).into(),
                     (Identifier("PRODUCT"), 763..770).into(),
                     (Sym(BrO), 770..771).into(),
@@ -472,11 +442,13 @@ mod test {
                     (String(""), 793..795).into(),
                     (Sym(Com), 795..796).into(),
                     (Sym(BrO), 796..797).into(),
-                    (Reference(18), 797..800).into(),
+                    (Sym(Hash), 797..798).into(),
+                    (Integer("18"), 798..800).into(),
                     (Sym(BrC), 800..801).into(),
                     (Sym(BrC), 801..802).into(),
                     (Sym(Sem), 802..803).into(),
-                    (Reference(17), 804..807).into(),
+                    (Sym(Hash), 804..805).into(),
+                    (Integer("17"), 805..807).into(),
                     (Sym(Eq), 807..808).into(),
                     (Identifier("PRODUCT_RELATED_PRODUCT_CATEGORY"), 808..840).into(),
                     (Sym(BrO), 840..841).into(),
@@ -485,35 +457,43 @@ mod test {
                     (Sym(Dol), 848..849).into(),
                     (Sym(Com), 849..850).into(),
                     (Sym(BrO), 850..851).into(),
-                    (Reference(16), 851..854).into(),
+                    (Sym(Hash), 851..852).into(),
+                    (Integer("16"), 852..854).into(),
                     (Sym(BrC), 854..855).into(),
                     (Sym(BrC), 855..856).into(),
                     (Sym(Sem), 856..857).into(),
-                    (Reference(18), 858..861).into(),
+                    (Sym(Hash), 858..859).into(),
+                    (Integer("18"), 859..861).into(),
                     (Sym(Eq), 861..862).into(),
                     (Identifier("PRODUCT_CONTEXT"), 862..877).into(),
                     (Sym(BrO), 877..878).into(),
                     (String(""), 878..880).into(),
                     (Sym(Com), 880..881).into(),
-                    (Reference(12), 881..884).into(),
+                    (Sym(Hash), 881..882).into(),
+                    (Integer("12"), 882..884).into(),
                     (Sym(Com), 884..885).into(),
                     (String(""), 885..887).into(),
                     (Sym(BrC), 887..888).into(),
                     (Sym(Sem), 888..889).into(),
-                    (Reference(19), 890..893).into(),
+                    (Sym(Hash), 890..891).into(),
+                    (Integer("19"), 891..893).into(),
                     (Sym(Eq), 893..894).into(),
                     (Identifier("APPLIED_ORGANIZATION_ASSIGNMENT"), 894..925).into(),
                     (Sym(BrO), 925..926).into(),
-                    (Reference(10), 926..929).into(),
+                    (Sym(Hash), 926..927).into(),
+                    (Integer("10"), 927..929).into(),
                     (Sym(Com), 929..930).into(),
-                    (Reference(20), 930..933).into(),
+                    (Sym(Hash), 930..931).into(),
+                    (Integer("20"), 931..933).into(),
                     (Sym(Com), 933..934).into(),
                     (Sym(BrO), 934..935).into(),
-                    (Reference(16), 935..938).into(),
+                    (Sym(Hash), 935..936).into(),
+                    (Integer("16"), 936..938).into(),
                     (Sym(BrC), 938..939).into(),
                     (Sym(BrC), 939..940).into(),
                     (Sym(Sem), 940..941).into(),
-                    (Reference(20), 942..945).into(),
+                    (Sym(Hash), 942..943).into(),
+                    (Integer("20"), 943..945).into(),
                     (Sym(Eq), 945..946).into(),
                     (Identifier("ORGANIZATION_ROLE"), 946..963).into(),
                     (Sym(BrO), 963..964).into(),
