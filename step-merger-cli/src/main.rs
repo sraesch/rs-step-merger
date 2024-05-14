@@ -64,8 +64,8 @@ fn run_program() -> Result<()> {
     let mut out_file = BufWriter::new(File::create(options.output_file)?);
     merge_assembly_structure_to_step(&assembly, !options.avoid_references, &mut out_file)?;
     info!(
-        "Merge assembly structure into step file...DONE in {} ms",
-        t.elapsed().as_millis()
+        "Merge assembly structure into step file...DONE in {} s",
+        t.elapsed().as_secs_f64()
     );
 
     Ok(())

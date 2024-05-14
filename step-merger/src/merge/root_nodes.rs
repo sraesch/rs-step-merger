@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use log::{error, warn};
+use log::{error, trace, warn};
 
 use crate::step::StepEntry;
 
@@ -60,6 +60,12 @@ impl FindRootNodes {
                 let prod_def_shape_id = references[0];
                 let shape_rep_id = references[1];
 
+                trace!(
+                    "SHAPE_DEFINITION_REPRESENTATION {} -> SHAPE_REPRESENTATION {}",
+                    shape_def_rep_id,
+                    shape_rep_id
+                );
+
                 self.shape_def_rep_to_shape_rep
                     .insert(shape_def_rep_id, shape_rep_id);
                 self.prod_def_shape_to_shape_def_rep
@@ -77,6 +83,13 @@ impl FindRootNodes {
                 }
 
                 let prod_def_id = references.last().unwrap();
+
+                trace!(
+                    "PRODUCT_DEFINITION_SHAPE {} -> PRODUCT_DEFINITION {}",
+                    prod_def_shape_id,
+                    prod_def_id
+                );
+
                 self.prod_def_to_prod_def_shape
                     .push((*prod_def_id, prod_def_shape_id));
             }
@@ -92,6 +105,11 @@ impl FindRootNodes {
                 }
 
                 let prod_def_id = references[1];
+
+                trace!(
+                    "NEXT_ASSEMBLY_USAGE_OCCURRENCE of PRODUCT_DEFINITION={}",
+                    prod_def_id
+                );
                 self.prod_def_assembly_occurrences.insert(prod_def_id);
             }
             _ => {}

@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use log::debug;
+
 use super::{StepData, StepEntry};
 
 use crate::Result;
@@ -48,9 +50,12 @@ impl<'a, W: Write> StepWriter<'a, W> {
             writer,
             is_finalized: false,
         };
+        debug!("Writing step file header...");
         step_writer.write_header(implementation_level, filename, protocol)?;
+        debug!("Writing step file header...DONE");
 
         // initialize data block
+        debug!("Start writing data...");
         writeln!(step_writer.writer, "DATA;")?;
 
         Ok(step_writer)
@@ -104,12 +109,15 @@ impl<'a, W: Write> StepWriter<'a, W> {
         )?;
 
         writeln!(self.writer, "ENDSEC;\n")?;
+        self.writer.flush()?;
 
         Ok(())
     }
 
     /// Finalizes the step writer.
     pub fn finalize(&mut self) -> Result<()> {
+        debug!("Finalizing step writer...");
+
         if self.is_finalized {
             return Ok(());
         } else {
@@ -118,6 +126,9 @@ impl<'a, W: Write> StepWriter<'a, W> {
 
         writeln!(self.writer, "ENDSEC;\n")?;
         writeln!(self.writer, "END-ISO-10303-21;")?;
+        self.writer.flush()?;
+
+        debug!("Finalizing step writer...DONE");
 
         Ok(())
     }

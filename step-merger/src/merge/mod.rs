@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fs::File, io::Write, path::Path};
 
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 
 use crate::{
     identity_matrix,
@@ -82,6 +82,7 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         self.create_app_context()?;
 
         // create default coordinate system
+        trace!("Create default coordinate system...");
         let coord_id = self.add_entry("CARTESIAN_POINT('',(0.,0.,0.))")?;
         self.add_entry("DIRECTION('',(0.,0.,1.))")?;
         self.add_entry("DIRECTION('',(1.,0.,0.))")?;
@@ -94,17 +95,37 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
 
         // create the nodes of the assembly structure and collect the node product definition and
         // shape representation ids
+        info!("Create assembly nodes...");
         let mut node_step_ids: Vec<NodeStepIds> = Vec::with_capacity(self.assembly.nodes.len());
         for node in self.assembly.nodes.iter() {
+            trace!("Create node {}...", node.get_label());
             let node_ids = self.create_node(node)?;
+            trace!(
+                "Create node {}...DONE with PRODUCT_DEFINITION={}, SHAPE_REPRESENTATION={}",
+                node.get_label(),
+                node_ids.product_definition_id,
+                node_ids.shape_representation_id
+            );
+
             node_step_ids.push(node_ids);
         }
+        info!(
+            "Create assembly nodes...DONE, {} nodes created",
+            node_step_ids.len()
+        );
 
         // create the parent-child relations between the assembly nodes
+        info!("Create parent-child relations...");
         for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
             for child in node.get_children() {
                 let child_ids = &node_step_ids[*child];
                 let child = &self.assembly.nodes[*child];
+
+                trace!(
+                    "Create parent-child relation between {} and {}...",
+                    node.get_label(),
+                    child.get_label()
+                );
                 self.create_parent_child_relation(
                     node.get_label(),
                     child.get_label(),
@@ -115,14 +136,21 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
             }
         }
 
+        info!("Create parent-child relations...DONE");
+
         // load all referenced step files and add them to the current step data
         if load_references {
+            info!("Load and add referenced step files...");
             let mut reference_map: HashMap<String, Vec<NodeStepIds>> = HashMap::new();
             for node in self.assembly.nodes.iter() {
+                trace!("Check node {} for references...", node.get_label());
                 if let Some(link) = node.get_link() {
+                    info!("Got link {}...", link);
                     if !reference_map.contains_key(link) {
+                        debug!("Load and add step file {}...", link);
                         match self.load_and_add_step(link) {
                             Ok(root_nodes) => {
+                                debug!("Root nodes: {:?}...", root_nodes);
                                 reference_map.insert(link.to_owned(), root_nodes);
                             }
                             Err(err) => {
@@ -130,12 +158,15 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
                                 continue;
                             }
                         }
+                    } else {
+                        trace!("Link {} already loaded...", link);
                     }
                 }
             }
 
             // create the parent-child relations between the assembly nodes and the referenced step
             // files
+            info!("Create parent-child relations for referenced step files...");
             for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
                 if let Some(link) = node.get_link() {
                     if let Some(root_nodes) = reference_map.get(link) {
@@ -151,6 +182,7 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
                     }
                 }
             }
+            info!("Create parent-child relations for referenced step files...DONE");
         }
 
         debug!("Write mechanical part entries...");
@@ -247,9 +279,13 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
 
         // Find the id for the APPLICATION_CONTEXT entry.
         // We use the buffered iterator to reuse the entries.
+        debug!(
+            "Find APPLICATION_CONTEXT entry in step file {}...",
+            filename
+        );
         entries.set_buffering_mode();
         let mut app_context_id = 0;
-        for entry in entries.iter() {
+        for (index, entry) in entries.iter().enumerate() {
             let entry = entry?;
             if entry
                 .get_definition()
@@ -257,6 +293,10 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
                 .starts_with("APPLICATION_CONTEXT")
             {
                 app_context_id = entry.get_id();
+                debug!(
+                    "APPLICATION_CONTEXT entry is {} at index={}",
+                    app_context_id, index
+                );
                 break;
             }
         }
@@ -272,6 +312,7 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
 
         // define the update function for the ids to elevate all ids and to change the APPLICATION_CONTEXT id
         let id_offset = self.id_counter;
+        debug!("ID offset is {}", id_offset);
         let update_id = |id: u64| {
             if id == app_context_id {
                 1
