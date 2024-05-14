@@ -79,7 +79,7 @@ fn main() {
         Err(err) => {
             error!("Error: {}", err);
             if let Some(source) = err.source() {
-                error!("From: {:?}", source);
+                error!("From: {}", source);
             }
             error!("Backtrace:\n{}", err.backtrace());
             error!("FAILED");
