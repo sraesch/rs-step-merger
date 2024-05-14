@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -107,9 +107,13 @@ impl Assembly {
     /// # Arguments
     /// * `file` - The file to load the assembly from.
     pub fn from_file<P: AsRef<Path>>(file: P) -> Result<Assembly> {
-        let rdr = std::io::BufReader::new(std::fs::File::open(file).unwrap());
-        let assembly: Assembly = serde_json::from_reader(rdr)
-            .map_err(|e| Error::IO(format!("Failed to load assembly from file: {}", e)))?;
+        let filename_str = file.as_ref().to_string_lossy().to_string();
+        let rdr = std::io::BufReader::new(
+            std::fs::File::open(file)
+                .map_err(|e| Error::FailedOpenFile(Arc::new(e), filename_str))?,
+        );
+        let assembly: Assembly =
+            serde_json::from_reader(rdr).map_err(|e| Error::LoadAssembly(Arc::new(e)))?;
 
         assembly.is_valid()?;
 
@@ -123,11 +127,7 @@ impl Assembly {
         for node in self.nodes.iter() {
             for child in node.get_children() {
                 if *child >= num_nodes {
-                    return Err(Error::InvalidFormat(format!(
-                        "Invalid child index {} in node {}",
-                        child,
-                        node.get_label()
-                    )));
+                    return Err(Error::InvalidFormat(*child, node.get_label().to_string()));
                 }
             }
         }

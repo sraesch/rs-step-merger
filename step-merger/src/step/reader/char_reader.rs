@@ -1,6 +1,9 @@
-use std::io::{BufRead, BufReader, Read};
+use std::{
+    io::{BufRead, BufReader, Read},
+    sync::Arc,
+};
 
-use crate::Result;
+use crate::{Error, Result};
 
 /// A character reader that reads from a buffer.
 pub struct CharReader<R: Read> {
@@ -37,7 +40,10 @@ impl<R: Read> CharReader<R> {
         self.buffer.clear();
         self.pos = 0;
         let mut line = String::new();
-        let bytes_read = self.reader.read_line(&mut line)?;
+        let bytes_read = self
+            .reader
+            .read_line(&mut line)
+            .map_err(|e| Error::ReadLineError(Arc::new(e)))?;
         if bytes_read == 0 {
             return Ok(false);
         }

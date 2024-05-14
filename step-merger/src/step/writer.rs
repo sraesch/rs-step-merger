@@ -1,10 +1,18 @@
-use std::io::Write;
+use std::{io::Write, sync::Arc};
 
 use log::debug;
 
 use super::{StepData, StepEntry};
 
-use crate::Result;
+use crate::{Error, Result};
+
+// All std::io::Error instances in this file produce StepFileWrite errors
+// Allows to use ? shorthand
+impl From<std::io::Error> for Error {
+    fn from(value: std::io::Error) -> Self {
+        Error::StepFileWrite(Arc::new(value))
+    }
+}
 
 /// Writes the given step data to the writer.
 ///

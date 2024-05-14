@@ -1,28 +1,44 @@
-use quick_error::quick_error;
-use std::io;
+use std::sync::Arc;
 
-quick_error! {
-    #[derive(Debug, Clone)]
-    pub enum Error {
-        IO(err: String) {
-            display("{}", err)
-        }
-        Internal(err: String) {
-            display("{}", err)
-        }
-        InvalidFormat(err: String) {
-            display("{}", err)
-        }
-        ParsingError(err: String) {
-            display("{}", err)
-        }
-    }
-}
+use thiserror::Error;
 
-impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self {
-        Error::IO(format!("{}", error))
-    }
+#[derive(Error, Debug, Clone)]
+pub enum Error {
+    #[error("Failed to parse assembly JSON")]
+    LoadAssembly(#[source] Arc<serde_json::Error>),
+
+    #[error("Invalid child index {0} in node {1}")]
+    InvalidFormat(usize, String),
+
+    #[error("Failed to write step file")]
+    StepFileWrite(#[source] Arc<std::io::Error>),
+
+    #[error("Data section not found")]
+    NoDataSection(),
+
+    #[error("Unexpected identifier: {0}")]
+    UnexpectedIdentifier(String),
+
+    #[error("Unexpected token. Expected {0}, got {1}")]
+    UnexpectedToken(String, String),
+
+    #[error("Invalid number")]
+    InvalidNumber(String),
+
+    #[error("Failed to read sequence")]
+    FailedSequence(#[source] Box<Error>),
+
+    #[error("Failed to read line from file")]
+    ReadLineError(#[source] Arc<std::io::Error>),
+
+    #[error("Unexpected end of input")]
+    EndOfInput(),
+
+    #[error("Failed to open file: {1}")]
+    FailedOpenFile(#[source] Arc<std::io::Error>, String),
+
+    #[error("No APPLICATION_CONTEXT entry found in step file {0}")]
+    AppContextMissing(String),
 }
 
 /// The result type used in this crate.

@@ -363,10 +363,7 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
         }
 
         if app_context_id == 0 {
-            return Err(Error::InvalidFormat(format!(
-                "No APPLICATION_CONTEXT entry found in step file {}",
-                filename
-            )));
+            return Err(Error::AppContextMissing(filename.to_string()));
         }
 
         entries.reset();
