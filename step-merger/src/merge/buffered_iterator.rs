@@ -5,6 +5,11 @@ pub struct BufferedIterator<Item: Clone + Sized, I: Iterator<Item = Item>> {
     mode: Mode,
 }
 
+/// An iterator that buffers the items it produces when activated to revert the iterator.
+pub struct BufferedIteratorIter<'a, Item: Clone + Sized, I: Iterator<Item = Item>> {
+    buffer: &'a mut BufferedIterator<Item, I>,
+}
+
 /// The mode of the iterator.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
@@ -37,12 +42,13 @@ impl<Item: Clone + Sized, I: Iterator<Item = Item>> BufferedIterator<Item, I> {
             self.mode = Mode::ReadBuffer(0);
         }
     }
-}
 
-impl<Item: Clone + Sized, I: Iterator<Item = Item>> Iterator for BufferedIterator<Item, I> {
-    type Item = Item;
+    /// Returns an iterator over the items produced by the iterator.
+    pub fn iter(&mut self) -> BufferedIteratorIter<Item, I> {
+        BufferedIteratorIter { buffer: self }
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self) -> Option<Item> {
         match self.mode {
             Mode::Normal => self.iterator.next(),
             Mode::FillBuffer => {
@@ -65,6 +71,16 @@ impl<Item: Clone + Sized, I: Iterator<Item = Item>> Iterator for BufferedIterato
                 }
             }
         }
+    }
+}
+
+impl<'a, Item: Clone + Sized, I: Iterator<Item = Item>> Iterator
+    for BufferedIteratorIter<'a, Item, I>
+{
+    type Item = Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.buffer.next()
     }
 }
 

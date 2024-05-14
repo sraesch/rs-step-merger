@@ -1,7 +1,8 @@
 {
-    "editor.formatOnSave": true,
-    "github.copilot.enable": {
-        "plaintext": "true",
-        "markdown": "true"
-    }
+  "editor.formatOnSave": true,
+  "github.copilot.enable": {
+    "plaintext": "true",
+    "markdown": "true"
+  },
+  "cSpell.words": ["Peekable"]
 }

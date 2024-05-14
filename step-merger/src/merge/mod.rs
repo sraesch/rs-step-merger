@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, path::Path};
+use std::{collections::HashMap, fs::File, io::Write, path::Path};
 
 use log::{debug, error, info};
 
@@ -8,7 +8,7 @@ use crate::{
         root_nodes::FindRootNodes,
         utils::{get_ids_from_mechanical_part, NodeStepIds},
     },
-    step::{StepData, StepEntry, StepWriter},
+    step::{STEPParser, StepEntry, StepWriter},
     Assembly, Error, Node, Result,
 };
 
@@ -121,8 +121,15 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
             for node in self.assembly.nodes.iter() {
                 if let Some(link) = node.get_link() {
                     if !reference_map.contains_key(link) {
-                        let root_nodes = self.load_and_add_step(link)?;
-                        reference_map.insert(link.to_owned(), root_nodes);
+                        match self.load_and_add_step(link) {
+                            Ok(root_nodes) => {
+                                reference_map.insert(link.to_owned(), root_nodes);
+                            }
+                            Err(err) => {
+                                error!("Error loading step file {}: {}", link, err);
+                                continue;
+                            }
+                        }
                     }
                 }
             }
@@ -131,15 +138,16 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
             // files
             for (node, node_ids) in self.assembly.nodes.iter().zip(node_step_ids.iter()) {
                 if let Some(link) = node.get_link() {
-                    let root_nodes = reference_map.get(link).unwrap();
-                    for child_ids in root_nodes.iter() {
-                        self.create_parent_child_relation(
-                            node.get_label(),
-                            node.get_label(),
-                            *node_ids,
-                            *child_ids,
-                            &identity_matrix(),
-                        )?;
+                    if let Some(root_nodes) = reference_map.get(link) {
+                        for child_ids in root_nodes.iter() {
+                            self.create_parent_child_relation(
+                                node.get_label(),
+                                node.get_label(),
+                                *node_ids,
+                                *child_ids,
+                                &identity_matrix(),
+                            )?;
+                        }
                     }
                 }
             }
@@ -209,13 +217,16 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
     /// * `file_path` - The path to the step file to be loaded.
     fn load_and_add_step<P: AsRef<Path>>(&mut self, file_path: P) -> Result<Vec<NodeStepIds>> {
         info!("Load step file {}...", file_path.as_ref().display());
-        let step_data = StepData::from_file(file_path.as_ref())?;
-        info!("Load step file {}...DONE", file_path.as_ref().display());
+        let mut file = File::open(file_path.as_ref())?;
+        let parser = STEPParser::new(&mut file)?;
 
-        self.load_and_add_step_entries(
-            step_data.get_entries().iter().cloned(),
+        let result = self.load_and_add_step_entries(
+            parser.into_iter(),
             file_path.as_ref().to_string_lossy().as_ref(),
-        )
+        )?;
+
+        info!("Load step file {}...DONE", file_path.as_ref().display());
+        Ok(result)
     }
 
     /// Adds the given step file as step entries to the current step data.
@@ -230,27 +241,32 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         filename: &str,
     ) -> Result<Vec<NodeStepIds>>
     where
-        I: Iterator<Item = StepEntry>,
+        I: Iterator<Item = Result<StepEntry>>,
     {
         let mut entries = BufferedIterator::new(entries);
 
         // Find the id for the APPLICATION_CONTEXT entry.
         // We use the buffered iterator to reuse the entries.
         entries.set_buffering_mode();
-        let app_context_id = entries
-            .find(|entry| {
-                entry
-                    .get_definition()
-                    .trim_start()
-                    .starts_with("APPLICATION_CONTEXT")
-            })
-            .map(|entry| entry.get_id())
-            .ok_or_else(|| {
-                Error::InvalidFormat(format!(
-                    "No APPLICATION_CONTEXT entry found in step file {}",
-                    filename
-                ))
-            })?;
+        let mut app_context_id = 0;
+        for entry in entries.iter() {
+            let entry = entry?;
+            if entry
+                .get_definition()
+                .trim_start()
+                .starts_with("APPLICATION_CONTEXT")
+            {
+                app_context_id = entry.get_id();
+                break;
+            }
+        }
+
+        if app_context_id == 0 {
+            return Err(Error::InvalidFormat(format!(
+                "No APPLICATION_CONTEXT entry found in step file {}",
+                filename
+            )));
+        }
 
         entries.reset();
 
@@ -267,7 +283,8 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
         // add the entries to the current step data
         let mut max_id = 0u64;
         let mut find_root_nodes = FindRootNodes::new();
-        for entry in entries {
+        for entry in entries.iter() {
+            let entry = entry?;
             let definition = entry.get_definition().trim();
 
             // exclude APPLICATION_CONTEXT and APPLICATION_PROTOCOL_DEFINITION
