@@ -1,22 +1,43 @@
 use chumsky::prelude::*;
 use criterion::{criterion_group, criterion_main, Criterion};
+use logos::Logos;
 use std::fs;
-use step_merger::step::lexer::Token;
 
 // Benchmark parsing files into Vector
-pub fn lexer_bench(c: &mut Criterion) {
+pub fn lexer_chumsky_bench(c: &mut Criterion) {
+    use step_merger::step::lexer_chumsky::Token;
     let filename = "../test_data/1.stp";
     let s = fs::read_to_string(filename).unwrap();
-    c.bench_function("1.stp", |b| b.iter(|| Token::lexer().parse(&s)));
+    c.bench_function("chumsky 1.stp", |b| b.iter(|| Token::lexer().parse(&s)));
     let filename = "../test_data/2.stp";
     let s = fs::read_to_string(filename).unwrap();
-    c.bench_function("2.stp", |b| b.iter(|| Token::lexer().parse(&s)));
+    c.bench_function("chumsky 2.stp", |b| b.iter(|| Token::lexer().parse(&s)));
     let filename = "../test_data/wiki.stp";
     let s = fs::read_to_string(filename).unwrap();
-    c.bench_function("wiki.stp", |b| b.iter(|| Token::lexer().parse(&s)));
+    c.bench_function("chumsky wiki.stp", |b| b.iter(|| Token::lexer().parse(&s)));
+}
+
+pub fn lexer_logos_bench(c: &mut Criterion) {
+    use step_merger::step::lexer_logos::Token;
+    let filename = "../test_data/1.stp";
+    let s = fs::read_to_string(filename).unwrap();
+    c.bench_function("logos 1.stp", |b| {
+        b.iter(|| Token::lexer(&s).collect::<Vec<_>>())
+    });
+    let filename = "../test_data/2.stp";
+    let s = fs::read_to_string(filename).unwrap();
+    c.bench_function("logos 2.stp", |b| {
+        b.iter(|| Token::lexer(&s).collect::<Vec<_>>())
+    });
+    let filename = "../test_data/wiki.stp";
+    let s = fs::read_to_string(filename).unwrap();
+    c.bench_function("logos wiki.stp", |b| {
+        b.iter(|| Token::lexer(&s).collect::<Vec<_>>())
+    });
 }
 
 pub fn lexer_bench_iter(c: &mut Criterion) {
+    use step_merger::step::lexer_chumsky::Token;
     let filename = "../test_data/2.stp";
     let s = fs::read_to_string(filename).unwrap();
 
@@ -44,5 +65,10 @@ pub fn lexer_bench_iter(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, lexer_bench, lexer_bench_iter);
+criterion_group!(
+    benches,
+    lexer_chumsky_bench,
+    lexer_logos_bench,
+    lexer_bench_iter
+);
 criterion_main!(benches);

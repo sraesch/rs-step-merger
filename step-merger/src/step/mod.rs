@@ -1,4 +1,5 @@
-pub mod lexer;
+pub mod lexer_chumsky;
+pub mod lexer_logos;
 mod reader;
 mod writer;
 
