@@ -1,9 +1,11 @@
 use logos::Logos;
 
 #[derive(Logos, Debug, PartialEq)]
-#[logos(skip r"[ \t\r\n\f]+")]
 pub enum Token<'src> {
     #[regex(r"\/\*([^*]|\*[^\/])*\*\/", logos::skip)]
+    Comments,
+    #[regex(r"[ \t\r\n\f]+", logos::skip)]
+    Whitespace,
     #[token("=")]
     Eq,
     #[token(";")]
