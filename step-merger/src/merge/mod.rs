@@ -8,7 +8,7 @@ use crate::{
         root_nodes::FindRootNodes,
         utils::{get_ids_from_mechanical_part, NodeStepIds},
     },
-    step::{STEPParser, StepEntry, StepWriter},
+    step::{STEPReader, StepEntry, StepWriter},
     Assembly, Error, Node, Result,
 };
 
@@ -18,11 +18,14 @@ mod buffered_iterator;
 mod root_nodes;
 mod utils;
 
-/// The function consumes the given assembly structure and creates step data consisting of the
-/// given assembly structure. All created step data is written to the given writer.
+/// The function consumes the given assembly structure and writes the merged step data to the given
+/// writer.
+/// All references to external step files are loaded and merged into the final step data.
+/// If a reference cannot be loaded, an error is dumped to the log and the process continues.
+/// The whole merging process is executed in a streaming fashion to reduce the memory footprint.
 ///
 /// # Arguments
-/// * `assembly` - The assembly structure to be merged.
+/// * `assembly` - The assembly structure to merged.
 /// * `load_references` - Flag to indicate if external references should be loaded.
 /// * `writer` - The writer for the merged step file.
 pub fn merge_assembly_structure_to_step<W: Write>(
@@ -37,14 +40,14 @@ pub fn merge_assembly_structure_to_step<W: Write>(
 }
 
 /// The internal step merge operator
-struct StepMerger<'a, 'b, W: Write> {
+struct StepMerger<'a, W: Write> {
     /// The assembly structure to be merged.
     assembly: &'a Assembly,
 
     /// The writer for the merged step file.
-    writer: StepWriter<'b, W>,
+    writer: StepWriter<W>,
 
-    /// The id for the step entries.
+    /// The id of the STEP entry for the default coordinate system.
     default_coordinate_system: u64,
 
     /// The id counter for the step entries.
@@ -54,13 +57,13 @@ struct StepMerger<'a, 'b, W: Write> {
     mechanical_design_ids: Vec<u64>,
 }
 
-impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
+impl<'a, W: Write> StepMerger<'a, W> {
     /// Creates a new step merger with the given writer and assembly structure.
     ///
     /// # Arguments
     /// * `writer` - The writer for the merged step file.
     /// * `assembly` - The assembly structure to be merged.
-    pub fn new(writer: &'b mut W, assembly: &'a Assembly) -> Result<Self> {
+    pub fn new(writer: W, assembly: &'a Assembly) -> Result<Self> {
         let protocol = vec!["AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF { 1 0 10303 403 1 1 4 }".to_owned()];
         let step_writer = StepWriter::new(writer, "2;1", "", &protocol)?;
 
@@ -92,6 +95,10 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
             coord_id + 1,
             coord_id + 2
         ))?;
+        trace!(
+            "Create default coordinate system...DONE, ID={}",
+            self.default_coordinate_system
+        );
 
         // create the nodes of the assembly structure and collect the node product definition and
         // shape representation ids
@@ -249,13 +256,19 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
     /// * `file_path` - The path to the step file to be loaded.
     fn load_and_add_step<P: AsRef<Path>>(&mut self, file_path: P) -> Result<Vec<NodeStepIds>> {
         info!("Load step file {}...", file_path.as_ref().display());
-        let mut file = File::open(file_path.as_ref())?;
-        let parser = STEPParser::new(&mut file)?;
 
+        trace!("Open step file {}...", file_path.as_ref().display());
+        let mut file = File::open(file_path.as_ref())?;
+
+        trace!("Create step reader...");
+        let parser = STEPReader::new(&mut file)?;
+
+        debug!("Stream step entries...");
         let result = self.load_and_add_step_entries(
             parser.into_iter(),
             file_path.as_ref().to_string_lossy().as_ref(),
         )?;
+        debug!("Stream step entries...DONE");
 
         info!("Load step file {}...DONE", file_path.as_ref().display());
         Ok(result)
@@ -277,8 +290,8 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
     {
         let mut entries = BufferedIterator::new(entries);
 
-        // Find the id for the APPLICATION_CONTEXT entry.
-        // We use the buffered iterator to reuse the entries.
+        // Find the id for the APPLICATION_CONTEXT entry. We use the buffered iterator to reuse the
+        // entries that have been read to find the APPLICATION_CONTEXT entry.
         debug!(
             "Find APPLICATION_CONTEXT entry in step file {}...",
             filename
@@ -310,7 +323,9 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
 
         entries.reset();
 
-        // define the update function for the ids to elevate all ids and to change the APPLICATION_CONTEXT id
+        // We define an update function to make sure that:
+        // - all ids are shifted by the current id counter (offset)
+        // - the APPLICATION_CONTEXT id is redirected to 1
         let id_offset = self.id_counter;
         debug!("ID offset is {}", id_offset);
         let update_id = |id: u64| {
@@ -321,12 +336,12 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
             }
         };
 
-        // add the entries to the current step data
+        // stream the entries into the output step file
         let mut max_id = 0u64;
         let mut find_root_nodes = FindRootNodes::new();
         for entry in entries.iter() {
             let entry = entry?;
-            let definition = entry.get_definition().trim();
+            let definition = entry.get_definition().trim_start();
 
             // exclude APPLICATION_CONTEXT and APPLICATION_PROTOCOL_DEFINITION
             if definition.starts_with("APPLICATION_CONTEXT")
@@ -335,9 +350,8 @@ impl<'a, 'b, W: Write> StepMerger<'a, 'b, W> {
                 continue;
             }
 
-            // create new entry and update the references
-            let mut new_entry = entry.clone();
-            new_entry.update_references(update_id);
+            // create new updated entry where the ids have been patched
+            let new_entry = entry.update_references(update_id);
             max_id = max_id.max(new_entry.get_id());
 
             // catch special case of MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION

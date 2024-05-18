@@ -1,39 +1,41 @@
 use std::{io::Read, iter::Peekable};
 
 use super::{
-    char_parser::CharReader,
-    whitespace_parser::{Token, WhitespaceParser},
+    char_reader::CharReader,
+    tokenizer::{Token, Tokenizer},
 };
 
 use crate::{Error, Result};
 
-/// A parser used by the STEP parser
+/// A parser that provides simple parsing operations like skipping sequences, reading strings,
+/// numbers, etc.
 pub struct Parser<R: Read> {
-    reader: Peekable<WhitespaceParser<CharReader<R>>>,
+    /// The tokenizer used to parse the input.
+    tokenizer: Peekable<Tokenizer<CharReader<R>>>,
 }
 
 impl<R: Read> Parser<R> {
-    /// Creates a new STEP parser from a reader.
+    /// Creates a new parser from the given character reader.
     ///
     /// # Arguments
-    /// * `reader` - The reader to read from.
+    /// * `reader` - The character reader to tokenize.
     pub fn new(reader: R) -> Self {
         Parser {
-            reader: WhitespaceParser::new(CharReader::new(reader)).peekable(),
+            tokenizer: Tokenizer::new(CharReader::new(reader)).peekable(),
         }
     }
 
-    /// Skips whitespace tokens.
+    /// Skips whitespace tokens, i.e., whitespace and comments.
     pub fn skip_whitespace_tokens(&mut self) -> Result<()> {
         loop {
-            match self.reader.peek() {
+            match self.tokenizer.peek() {
                 Some(Ok(Token::Whitespace)) => {
-                    if let Some(Err(err)) = self.reader.next() {
+                    if let Some(Err(err)) = self.tokenizer.next() {
                         return Err(err);
                     }
                 }
                 Some(Ok(Token::Comment)) => {
-                    if let Some(Err(err)) = self.reader.next() {
+                    if let Some(Err(err)) = self.tokenizer.next() {
                         return Err(err);
                     }
                 }
@@ -50,13 +52,13 @@ impl<R: Read> Parser<R> {
         let mut count: usize = 0;
 
         loop {
-            match self.reader.peek() {
+            match self.tokenizer.peek() {
                 Some(Ok(Token::Character(ch))) => {
                     if !predicate(*ch) {
                         return Ok(count);
                     }
 
-                    if let Some(Err(err)) = self.reader.next() {
+                    if let Some(Err(err)) = self.tokenizer.next() {
                         return Err(err);
                     } else {
                         count += 1;
@@ -83,14 +85,14 @@ impl<R: Read> Parser<R> {
         let mut result = String::new();
 
         loop {
-            match self.reader.peek() {
+            match self.tokenizer.peek() {
                 Some(Ok(Token::Character(ch))) => {
                     if !predicate(*ch) {
                         return Ok(result);
                     }
 
                     result.push(*ch);
-                    if let Some(Err(err)) = self.reader.next() {
+                    if let Some(Err(err)) = self.tokenizer.next() {
                         return Err(err);
                     }
                 }
@@ -99,7 +101,7 @@ impl<R: Read> Parser<R> {
                         return Ok(result);
                     } else {
                         result.push(' ');
-                        if let Some(Err(err)) = self.reader.next() {
+                        if let Some(Err(err)) = self.tokenizer.next() {
                             return Err(err);
                         }
                     }
@@ -109,7 +111,7 @@ impl<R: Read> Parser<R> {
                         return Ok(result);
                     } else {
                         result.push(' ');
-                        if let Some(Err(err)) = self.reader.next() {
+                        if let Some(Err(err)) = self.tokenizer.next() {
                             return Err(err);
                         }
                     }
@@ -126,7 +128,7 @@ impl<R: Read> Parser<R> {
     /// * `sequence` - The sequence to check for.
     pub fn read_exact_sequence(&mut self, sequence: &str) -> Result<()> {
         for ch in sequence.chars() {
-            match self.reader.next() {
+            match self.tokenizer.next() {
                 Some(Ok(Token::Character(parsed_ch))) => {
                     if parsed_ch != ch {
                         return Err(Error::InvalidFormat(format!(

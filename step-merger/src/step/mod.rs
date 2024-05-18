@@ -1,11 +1,11 @@
-mod parser;
+mod reader;
 mod writer;
 
 use std::{fs::File, io::Cursor, ops::Range, path::Path, str::FromStr};
 
 use crate::{Error, Result};
 
-pub use parser::STEPParser;
+pub use reader::STEPReader;
 pub use writer::StepWriter;
 
 /// A single entry in the STEP file.
@@ -53,9 +53,9 @@ impl StepEntry {
     ///
     /// # Arguments
     /// * `f` - The function to update the references. Must be a strictly monotonic function.
-    pub fn update_references(&mut self, f: impl Fn(u64) -> u64) {
-        // update my own id
-        self.id = f(self.id);
+    pub fn update_references(&self, f: impl Fn(u64) -> u64) -> Self {
+        // the new id
+        let id = f(self.id);
 
         // update the references in the definition
         let mut new_definition = String::new();
@@ -104,7 +104,10 @@ impl StepEntry {
             }
         }
 
-        self.definition = new_definition;
+        Self {
+            id,
+            definition: new_definition,
+        }
     }
 
     /// Returns a list of all references in the definition excluding the own id.
@@ -153,6 +156,7 @@ impl StepEntry {
 }
 
 /// The data of a STEP file.
+#[derive(Default)]
 pub struct StepData {
     /// The entries in the STEP file.
     entries: Vec<StepEntry>,
@@ -175,7 +179,7 @@ impl StepData {
     /// # Arguments
     /// * `path` - The path to the STEP file.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<StepData> {
-        let step_parser = STEPParser::new(File::open(path)?)?;
+        let step_parser = STEPReader::new(File::open(path)?)?;
 
         let mut entries = Vec::new();
         for entry in step_parser {
@@ -197,18 +201,6 @@ impl StepData {
 
         let mut file = File::create(filename)?;
         writer::write_step(&mut file, self, filename_str.as_str())
-    }
-
-    /// Updates the references in the step data.
-    ///
-    /// #@ Arguments
-    /// * `f` - The function to update the references. Must be a strictly monotonic function.
-    pub fn update_reference(&mut self, f: impl Fn(u64) -> u64) {
-        for entry in self.entries.iter_mut() {
-            entry.update_references(&f);
-        }
-
-        self.id_range = f(self.id_range.start)..f(self.id_range.end);
     }
 
     /// Adds an entry to the step data.
@@ -267,7 +259,7 @@ impl FromStr for StepData {
 
     fn from_str(s: &str) -> Result<Self> {
         let reader = Cursor::new(s.as_bytes());
-        let parsed_step = STEPParser::new(reader)?;
+        let parsed_step = STEPReader::new(reader)?;
 
         let mut entries = Vec::new();
         for entry in parsed_step {
@@ -308,13 +300,13 @@ mod test {
     fn test_update_reference_simple() {
         let f = |id| id + 1;
 
-        let mut entry = StepEntry::new(1, "IFCFOO('FOO', #2);");
-        entry.update_references(f);
+        let entry = StepEntry::new(1, "IFCFOO('FOO', #2);");
+        let entry = entry.update_references(f);
         assert_eq!(entry.get_id(), 2);
         assert_eq!(entry.get_definition(), "IFCFOO('FOO', #3);");
 
-        let mut entry = StepEntry::new(1, "IFCFOO('FOO', #2#3);");
-        entry.update_references(f);
+        let entry = StepEntry::new(1, "IFCFOO('FOO', #2#3);");
+        let entry = entry.update_references(f);
         assert_eq!(entry.get_id(), 2);
         assert_eq!(entry.get_definition(), "IFCFOO('FOO', #3#4);");
     }
@@ -323,8 +315,8 @@ mod test {
     fn test_update_reference_complex() {
         let f = |id| id + 1000;
 
-        let mut entry = StepEntry::new(1, "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#9531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#8,#9,#7))REPRESENTATION_CONTEXT('',''));");
-        entry.update_references(f);
+        let entry = StepEntry::new(1, "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#9531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#8,#9,#7))REPRESENTATION_CONTEXT('',''));");
+        let entry = entry.update_references(f);
         assert_eq!(entry.get_id(), 1001);
         assert_eq!(entry.get_definition(), "(GEOMETRIC_REPRESENTATION_CONTEXT(3)GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#10531))GLOBAL_UNIT_ASSIGNED_CONTEXT((#1008,#1009,#1007))REPRESENTATION_CONTEXT('',''));");
     }

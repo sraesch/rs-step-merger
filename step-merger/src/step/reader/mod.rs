@@ -6,22 +6,29 @@ use crate::{Error, Result};
 
 use super::StepEntry;
 
-mod char_parser;
+mod char_reader;
 mod parser;
-mod whitespace_parser;
+mod tokenizer;
 
-pub struct STEPParser<R: Read> {
+/// The STEP reader consumes a reader and parses the STEP entries from it. All entries are returned
+/// as `StepEntry` instances in the order they appear in the file.
+/// The reader implements the `Iterator` trait and returns `Result<StepEntry>` instances s.t. the
+/// returned entries can be processed in a streaming fashion.
+pub struct STEPReader<R: Read> {
+    /// The parser used to parse the STEP entries.
     parser: Parser<R>,
+
+    /// Indicates if the end of the data section has been reached.
     reached_end: bool,
 }
 
-impl<R: Read> STEPParser<R> {
+impl<R: Read> STEPReader<R> {
     /// Creates a new STEP parser from a reader.
     ///
     /// # Arguments
-    /// * `reader` - The reader to read from.
+    /// * `reader` - The reader to parse the STEP-data from.
     pub fn new(reader: R) -> Result<Self> {
-        let mut step_parser = STEPParser {
+        let mut step_parser = STEPReader {
             parser: Parser::new(reader),
             reached_end: false,
         };
@@ -32,7 +39,8 @@ impl<R: Read> STEPParser<R> {
         Ok(step_parser)
     }
 
-    /// Parses the initial ISO String 'ISO-10303-21'.
+    /// Parses the initial ISO String 'ISO-10303-21' and fails if it is not found or not correctly
+    /// formatted.
     fn parse_iso_line(&mut self) -> Result<()> {
         self.parser.skip_whitespace_tokens()?;
         self.parser.read_exact_sequence("ISO-10303-21")?;
@@ -42,7 +50,7 @@ impl<R: Read> STEPParser<R> {
         Ok(())
     }
 
-    /// Searches for the DATA section.
+    /// Searches for the DATA section and fails if it is not found.
     fn find_data_section(&mut self) -> Result<()> {
         loop {
             self.parser.skip_whitespace_tokens()?;
@@ -67,7 +75,7 @@ impl<R: Read> STEPParser<R> {
     }
 
     /// Reads the next STEP entry and returns none if the end of the section is reached.
-    /// Otherwise, returns the read STEP entry.
+    /// Otherwise, returns the read STEP entry or an error if the input is invalid.
     fn read_next_entry(&mut self) -> Result<Option<StepEntry>> {
         // check if the end of the section is already reached
         if self.reached_end {
@@ -108,7 +116,7 @@ impl<R: Read> STEPParser<R> {
     }
 }
 
-impl<R: Read> Iterator for STEPParser<R> {
+impl<R: Read> Iterator for STEPReader<R> {
     type Item = Result<StepEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -129,22 +137,22 @@ mod tests {
     #[test]
     fn test_init_parser() {
         let mut input = Cursor::new("ISO-10303-21; DATA;");
-        STEPParser::new(&mut input).unwrap();
+        STEPReader::new(&mut input).unwrap();
 
         let mut input = Cursor::new("ISO-10303-21 ; DATA ;");
-        STEPParser::new(&mut input).unwrap();
+        STEPReader::new(&mut input).unwrap();
 
         let mut input = Cursor::new("ISO-10304-21 ; DATA;");
-        assert!(STEPParser::new(&mut input).is_err());
+        assert!(STEPReader::new(&mut input).is_err());
 
         let mut input = Cursor::new("ISO-10303-21 ; ");
-        assert!(STEPParser::new(&mut input).is_err());
+        assert!(STEPReader::new(&mut input).is_err());
     }
 
     #[test]
     fn test_read_next_entry1() {
         let mut input = Cursor::new("ISO-10303-21; DATA; #1=; ENDSEC;");
-        let mut parser = STEPParser::new(&mut input).unwrap();
+        let mut parser = STEPReader::new(&mut input).unwrap();
 
         let entry = parser.next().unwrap().unwrap();
         assert_eq!(entry.id, 1);
@@ -156,7 +164,7 @@ mod tests {
     #[test]
     fn test_read_next_entry2() {
         let mut input = Cursor::new(include_bytes!("../../../../test_data/wiki.stp"));
-        let parser = STEPParser::new(&mut input).unwrap();
+        let parser = STEPReader::new(&mut input).unwrap();
 
         let entries: Vec<StepEntry> = parser.into_iter().map(|r| r.unwrap()).collect();
         assert_eq!(entries.len(), 11);
