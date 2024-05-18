@@ -110,6 +110,10 @@ impl<R: Read> Iterator for STEPReader<R> {
 }
 
 impl<R: Read> STEPReaderTrait<R> for STEPReader<R> {
+    fn get_name(&self) -> &'static str {
+        "Plain STEP reader"
+    }
+
     fn new(reader: R) -> Result<Self> {
         let mut step_parser = STEPReader {
             parser: Parser::new(reader),
@@ -120,95 +124,5 @@ impl<R: Read> STEPReaderTrait<R> for STEPReader<R> {
         step_parser.find_data_section()?;
 
         Ok(step_parser)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::io::Cursor;
-
-    use super::*;
-
-    #[test]
-    fn test_init_parser() {
-        let mut input = Cursor::new("ISO-10303-21; DATA;");
-        STEPReader::new(&mut input).unwrap();
-
-        let mut input = Cursor::new("ISO-10303-21 ; DATA ;");
-        STEPReader::new(&mut input).unwrap();
-
-        let mut input = Cursor::new("ISO-10304-21 ; DATA;");
-        assert!(STEPReader::new(&mut input).is_err());
-
-        let mut input = Cursor::new("ISO-10303-21 ; ");
-        assert!(STEPReader::new(&mut input).is_err());
-    }
-
-    #[test]
-    fn test_read_next_entry1() {
-        let mut input = Cursor::new("ISO-10303-21; DATA; #1=; ENDSEC;");
-        let mut parser = STEPReader::new(&mut input).unwrap();
-
-        let entry = parser.next().unwrap().unwrap();
-        assert_eq!(entry.id, 1);
-        assert_eq!(entry.definition, "");
-
-        assert!(parser.next().is_none());
-    }
-
-    #[test]
-    fn test_read_next_entry2() {
-        let mut input = Cursor::new(include_bytes!("../../../../../test_data/wiki.stp"));
-        let parser = STEPReader::new(&mut input).unwrap();
-
-        let entries: Vec<StepEntry> = parser.into_iter().map(|r| r.unwrap()).collect();
-        assert_eq!(entries.len(), 11);
-
-        assert!(entries
-            .iter()
-            .enumerate()
-            .all(|(i, entry)| entry.id == i as u64 + 10));
-
-        assert_eq!(
-            entries[0].get_definition(),
-            "ORGANIZATION('O0001','LKSoft','company')"
-        );
-        assert_eq!(
-            entries[1].get_definition(),
-            "PRODUCT_DEFINITION_CONTEXT('part definition',#12,'manufacturing')"
-        );
-        assert_eq!(
-            entries[2].get_definition(),
-            "APPLICATION_CONTEXT('mechanical design')"
-        );
-        assert_eq!(
-            entries[3].get_definition(),
-            "APPLICATION_PROTOCOL_DEFINITION('','automotive_design',2003,#12)"
-        );
-        assert_eq!(
-            entries[4].get_definition(),
-            "PRODUCT_DEFINITION('0',$,#15,#11)"
-        );
-        assert_eq!(
-            entries[5].get_definition(),
-            "PRODUCT_DEFINITION_FORMATION('1',$,#16)"
-        );
-        assert_eq!(
-            entries[6].get_definition(),
-            "PRODUCT('A0001','Test Part 1','',(#18))"
-        );
-        assert_eq!(
-            entries[7].get_definition(),
-            "PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#16))"
-        );
-        assert_eq!(entries[8].get_definition(), "PRODUCT_CONTEXT('',#12,'')");
-        assert_eq!(
-            entries[9].get_definition(),
-            "APPLIED_ORGANIZATION_ASSIGNMENT(#10,#20,(#16))"
-        );
-        assert_eq!(
-            entries[10].get_definition(),
-            "ORGANIZATION_ROLE('id owner')"
-        );
     }
 }

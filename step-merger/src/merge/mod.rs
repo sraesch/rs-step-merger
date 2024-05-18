@@ -313,6 +313,7 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
 
         trace!("Create step reader...");
         let parser = STEPReader::new(r)?;
+        debug!("STEP reader: {}", parser.get_name());
 
         debug!("Stream step entries...");
         let result = self.load_and_add_step_entries(parser.into_iter(), link)?;
