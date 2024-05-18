@@ -67,7 +67,7 @@ impl<P: Iterator<Item = Result<char>>> Tokenizer<P> {
                 },
                 None => {
                     if fail_on_eof {
-                        return Err(Error::InvalidFormat("Unexpected end of input.".to_string()));
+                        return Err(Error::EndOfInput());
                     } else {
                         return Ok(());
                     }

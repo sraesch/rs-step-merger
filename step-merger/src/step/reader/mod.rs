@@ -67,7 +67,7 @@ impl<R: Read> STEPReader<R> {
 
             let num_skipped = self.parser.skip_until(|ch| !ch.is_ascii_alphabetic())?;
             if num_skipped == 0 && identifier.is_empty() {
-                return Err(Error::InvalidFormat("DATA section not found".to_string()));
+                return Err(Error::NoDataSection());
             }
         }
 
@@ -97,10 +97,7 @@ impl<R: Read> STEPReader<R> {
 
             return Ok(None);
         } else if !identifier.is_empty() {
-            return Err(Error::InvalidFormat(format!(
-                "Unexpected identifier: {}",
-                identifier
-            )));
+            return Err(Error::UnexpectedIdentifier(identifier));
         }
 
         // no identifier, so there must be a new STEP entry
