@@ -30,6 +30,9 @@ impl<R: Read> CharReader<R> {
     /// Refreshes the buffer by reading a new line from the reader.
     /// Returns true if a new line was read, false if the reader is at the end.
     fn refresh_buffer(&mut self) -> Result<bool> {
+        // make sure the buffer is empty
+        assert!(self.pos == self.buffer.len(), "Buffer is not empty");
+
         // read a new line from the reader as characters and store them in the buffer
         self.buffer.clear();
         self.pos = 0;

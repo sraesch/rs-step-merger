@@ -2,13 +2,16 @@ use std::iter::Peekable;
 
 use crate::{Error, Result};
 
-/// A parser that skips white space and comments.
-pub struct WhitespaceParser<P: Iterator<Item = Result<char>>> {
+/// A tokenizer that reads characters and returns simple tokens.
+pub struct Tokenizer<P: Iterator<Item = Result<char>>> {
+    /// The underlying parser that reads characters.
     parser: Peekable<P>,
-    is_inside_comment: bool,
+
+    /// Indicates if we are currently inside a string.
+    is_inside_string: bool,
 }
 
-/// The different tokens that can be read.
+/// The different tokens that are returned by the tokenizer.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Token {
     Whitespace,
@@ -16,20 +19,21 @@ pub enum Token {
     Character(char),
 }
 
-impl<P: Iterator<Item = Result<char>>> WhitespaceParser<P> {
-    /// Creates a new whitespace parser from the given character parser.
+impl<P: Iterator<Item = Result<char>>> Tokenizer<P> {
+    /// Creates a new tokenizer from the given character parser.
     ///
     /// # Arguments
     /// * `parser` - The character parser to read from.
     pub fn new(parser: P) -> Self {
-        WhitespaceParser {
+        Tokenizer {
             parser: parser.peekable(),
-            is_inside_comment: false,
+            is_inside_string: false,
         }
     }
 
     /// Converts the parser to a string.
-    pub fn convert_to_string(self) -> String {
+    #[allow(dead_code)]
+    pub fn into_string(self) -> Result<String> {
         let mut result = String::new();
 
         for token in self {
@@ -37,11 +41,11 @@ impl<P: Iterator<Item = Result<char>>> WhitespaceParser<P> {
                 Ok(Token::Whitespace) => result.push('\n'),
                 Ok(Token::Comment) => result.push_str("/**/"),
                 Ok(Token::Character(ch)) => result.push(ch),
-                Err(err) => panic!("Error: {}\n", err),
+                Err(err) => return Err(err),
             }
         }
 
-        result
+        Ok(result)
     }
 
     /// Skips until the predicate is not true anymore.
@@ -77,7 +81,7 @@ impl<P: Iterator<Item = Result<char>>> WhitespaceParser<P> {
     }
 }
 
-impl<P: Iterator<Item = Result<char>>> Iterator for WhitespaceParser<P> {
+impl<P: Iterator<Item = Result<char>>> Iterator for Tokenizer<P> {
     type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Result<Token>> {
@@ -91,12 +95,12 @@ impl<P: Iterator<Item = Result<char>>> Iterator for WhitespaceParser<P> {
 
         // case 1: check for string start or end
         if ch == '\'' {
-            self.is_inside_comment = !self.is_inside_comment;
+            self.is_inside_string = !self.is_inside_string;
             return Some(Ok(Token::Character('\'')));
         }
 
         // case 2: check if we are inside a string
-        if self.is_inside_comment {
+        if self.is_inside_string {
             return Some(Ok(Token::Character(ch)));
         }
 
@@ -143,14 +147,14 @@ impl<P: Iterator<Item = Result<char>>> Iterator for WhitespaceParser<P> {
 mod test {
     use std::io::Cursor;
 
-    use crate::step::parser::char_parser::CharReader;
+    use crate::step::reader::char_reader::CharReader;
 
     use super::*;
 
     #[test]
-    fn test_whitespace_parser_single_word_with_padding() {
+    fn test_tokenizer_single_word_with_padding() {
         let input = "    Hello\n  ";
-        let mut parser = WhitespaceParser::new(input.chars().map(Ok));
+        let mut parser = Tokenizer::new(input.chars().map(Ok));
 
         assert_eq!(parser.next().unwrap().unwrap(), Token::Whitespace);
         assert_eq!(parser.next().unwrap().unwrap(), Token::Character('H'));
@@ -163,9 +167,9 @@ mod test {
     }
 
     #[test]
-    fn test_whitespace_parser_single_word_with_comment() {
+    fn test_tokenizer_single_word_with_comment() {
         let input = "    Hello\n /*asd*/  ";
-        let mut parser = WhitespaceParser::new(input.chars().map(Ok));
+        let mut parser = Tokenizer::new(input.chars().map(Ok));
 
         assert_eq!(parser.next().unwrap().unwrap(), Token::Whitespace);
         assert_eq!(parser.next().unwrap().unwrap(), Token::Character('H'));
@@ -180,9 +184,9 @@ mod test {
     }
 
     #[test]
-    fn test_whitespace_parser_single_word_with_comment_and_string() {
+    fn test_tokenizer_single_word_with_comment_and_string() {
         let input = "    Hello\n /*asd''*/ '/**/' ";
-        let mut parser = WhitespaceParser::new(input.chars().map(Ok));
+        let mut parser = Tokenizer::new(input.chars().map(Ok));
 
         assert_eq!(parser.next().unwrap().unwrap(), Token::Whitespace);
         assert_eq!(parser.next().unwrap().unwrap(), Token::Character('H'));
@@ -204,7 +208,7 @@ mod test {
     }
 
     #[test]
-    fn test_whitespace_parser_complex() {
+    fn test_tokenizer_complex() {
         let input = r#"
         ISO-10303-21;
 
@@ -227,7 +231,7 @@ HEADER;
 ENDSEC;
         "#;
 
-        let parser = WhitespaceParser::new(input.chars().map(Ok));
+        let parser = Tokenizer::new(input.chars().map(Ok));
         let mut cleaned_lines: Vec<String> = Vec::new();
 
         let mut buffer = String::new();
@@ -276,12 +280,12 @@ ENDSEC;
     }
 
     #[test]
-    fn test_whitespace_parser_complex2() {
+    fn test_tokenizer_complex2() {
         let mut input = Cursor::new(include_bytes!("../../../../test_data/wiki.stp"));
         let char_reader = CharReader::new(&mut input);
-        let parser = WhitespaceParser::new(char_reader);
+        let parser = Tokenizer::new(char_reader);
 
         let output = include_str!("../../../../test_data/wiki-normalized.stp");
-        assert_eq!(output, parser.convert_to_string());
+        assert_eq!(output, parser.into_string().unwrap());
     }
 }

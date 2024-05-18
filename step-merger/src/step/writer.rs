@@ -27,12 +27,16 @@ pub fn write_step<W: Write>(writer: &mut W, step: &StepData, filename: &str) -> 
 
 /// A step writer for manually writing the step entries. Can be used to stream the
 /// step entries to a writer.
-pub struct StepWriter<'a, W: Write> {
-    writer: &'a mut W,
+pub struct StepWriter<W: Write> {
+    /// The underlying writer to write to.
+    writer: W,
+
+    /// Indicates if the writer has been finalized.
+    /// If finalized, no further entries can be written.
     is_finalized: bool,
 }
 
-impl<'a, W: Write> StepWriter<'a, W> {
+impl<W: Write> StepWriter<W> {
     /// Creates and initializes a new step writer.
     ///
     /// # Arguments
@@ -41,7 +45,7 @@ impl<'a, W: Write> StepWriter<'a, W> {
     /// * `filename` - The filename string to set in the header.
     /// * `protocol` - The protocol strings to set in the header.
     pub fn new(
-        writer: &'a mut W,
+        writer: W,
         implementation_level: &str,
         filename: &str,
         protocol: &[String],
@@ -75,7 +79,7 @@ impl<'a, W: Write> StepWriter<'a, W> {
         Ok(())
     }
 
-    /// Writes the file header for the given header values.
+    /// Writes the STEP file header for the given header values.
     ///
     /// # Arguments
     /// * `implementation_level` - The implementation level string to set in the header.
@@ -134,7 +138,7 @@ impl<'a, W: Write> StepWriter<'a, W> {
     }
 }
 
-impl<'a, W: Write> Drop for StepWriter<'a, W> {
+impl<W: Write> Drop for StepWriter<W> {
     fn drop(&mut self) {
         if let Err(err) = self.finalize() {
             log::error!("Failed to finalize step writer: {}", err);

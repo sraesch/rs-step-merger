@@ -78,7 +78,7 @@ impl Node {
     }
 
     /// Returns the children of the node.
-    pub fn get_children(&self) -> &Vec<usize> {
+    pub fn get_children(&self) -> &[usize] {
         &self.children
     }
 
