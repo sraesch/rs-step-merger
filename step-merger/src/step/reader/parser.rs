@@ -116,7 +116,7 @@ impl<R: Read> Parser<R> {
                         }
                     }
                 }
-                Some(Err(err)) => return Err(err.clone()),
+                Some(Err(err)) => return Err(Error::FailedSequence(Box::new(err.clone()))),
                 None => return Ok(result),
             }
         }
@@ -131,30 +131,30 @@ impl<R: Read> Parser<R> {
             match self.tokenizer.next() {
                 Some(Ok(Token::Character(parsed_ch))) => {
                     if parsed_ch != ch {
-                        return Err(Error::InvalidFormat(format!(
-                            "Expected '{}', got '{}'.",
-                            ch, parsed_ch
-                        )));
+                        return Err(Error::UnexpectedToken(
+                            ch.to_string(),
+                            parsed_ch.to_string(),
+                        ));
                     }
                 }
                 Some(Ok(Token::Whitespace)) => {
-                    return Err(Error::InvalidFormat(format!(
-                        "Expected '{}', got whitespace.",
-                        sequence
-                    )));
+                    return Err(Error::UnexpectedToken(
+                        sequence.to_string(),
+                        "whitespace".to_string(),
+                    ));
                 }
                 Some(Ok(Token::Comment)) => {
-                    return Err(Error::InvalidFormat(format!(
-                        "Expected '{}', got comment.",
-                        sequence
-                    )));
+                    return Err(Error::UnexpectedToken(
+                        sequence.to_string(),
+                        "comment.".to_string(),
+                    ));
                 }
-                Some(Err(err)) => return Err(err.clone()),
+                Some(Err(err)) => return Err(Error::FailedSequence(Box::new(err))),
                 None => {
-                    return Err(Error::InvalidFormat(format!(
-                        "Expected '{}', got eof.",
-                        sequence
-                    )))
+                    return Err(Error::UnexpectedToken(
+                        sequence.to_string(),
+                        "eof".to_string(),
+                    ))
                 }
             }
         }
@@ -166,8 +166,7 @@ impl<R: Read> Parser<R> {
     pub fn read_u64(&mut self) -> Result<u64> {
         self.skip_whitespace_tokens()?;
         let s = self.read_string(|ch| ch.is_ascii_digit(), false)?;
-        s.parse()
-            .map_err(|_| Error::InvalidFormat("Invalid number".to_string()))
+        s.parse().map_err(|_| Error::InvalidNumber(s))
     }
 }
 

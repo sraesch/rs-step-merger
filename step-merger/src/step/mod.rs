@@ -1,7 +1,7 @@
 mod reader;
 mod writer;
 
-use std::{fs::File, io::Cursor, ops::Range, path::Path, str::FromStr};
+use std::{fs::File, io::Cursor, ops::Range, path::Path, str::FromStr, sync::Arc};
 
 use crate::{Error, Result};
 
@@ -179,10 +179,14 @@ impl StepData {
     /// # Arguments
     /// * `path` - The path to the STEP file.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<StepData> {
-        let step_parser = STEPReader::new(File::open(path)?)?;
+        let filename_str: String = path.as_ref().to_string_lossy().to_string();
+
+        let step_reader = STEPReader::new(
+            File::open(path).map_err(|e| Error::FailedOpenFile(Arc::new(e), filename_str))?,
+        )?;
 
         let mut entries = Vec::new();
-        for entry in step_parser {
+        for entry in step_reader {
             entries.push(entry?);
         }
 
@@ -199,7 +203,8 @@ impl StepData {
     pub fn to_file<P: AsRef<Path>>(&self, filename: P) -> Result<()> {
         let filename_str: String = filename.as_ref().to_string_lossy().to_string();
 
-        let mut file = File::create(filename)?;
+        let mut file = File::create(filename)
+            .map_err(|e| Error::FailedOpenFile(Arc::new(e), filename_str.clone()))?;
         writer::write_step(&mut file, self, filename_str.as_str())
     }
 
