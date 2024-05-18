@@ -61,8 +61,8 @@ fn run_program() -> Result<()> {
 
     info!("Merge assembly structure into step file...");
     let t = Instant::now();
-    let mut out_file = BufWriter::new(File::create(options.output_file)?);
-    merge_assembly_structure_to_step(&assembly, !options.avoid_references, &mut out_file)?;
+    let out_file = BufWriter::new(File::create(options.output_file)?);
+    merge_assembly_structure_to_step(&assembly, !options.avoid_references, out_file)?;
     info!(
         "Merge assembly structure into step file...DONE in {} s",
         t.elapsed().as_secs_f64()

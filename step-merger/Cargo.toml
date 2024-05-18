@@ -1,6 +1,7 @@
 [package]
 name = "step-merger"
-version = "0.1.2"
+version = "0.2.0"
+authors = ["Sascha Raesch <sascha.raesch@gmail.com>"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

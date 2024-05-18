@@ -1,4 +1,8 @@
-use std::{collections::HashMap, fs::File, io::Write, path::Path};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Read, Write},
+};
 
 use log::{debug, error, info, trace};
 
@@ -18,6 +22,15 @@ mod buffered_iterator;
 mod root_nodes;
 mod utils;
 
+/// The function resolves the given file path and returns the file handle.
+/// Helper function for resolving relative file paths.
+#[inline]
+pub fn resolve_file(file_path: &str) -> Result<File> {
+    let file = File::open(file_path)?;
+
+    Ok(file)
+}
+
 /// The function consumes the given assembly structure and writes the merged step data to the given
 /// writer.
 /// All references to external step files are loaded and merged into the final step data.
@@ -28,24 +41,61 @@ mod utils;
 /// * `assembly` - The assembly structure to merged.
 /// * `load_references` - Flag to indicate if external references should be loaded.
 /// * `writer` - The writer for the merged step file.
-pub fn merge_assembly_structure_to_step<W: Write>(
+pub fn merge_assembly_structure_to_step<W>(
     assembly: &Assembly,
     load_references: bool,
-    writer: &mut W,
-) -> Result<()> {
-    let mut merger = StepMerger::new(writer, assembly)?;
+    writer: W,
+) -> Result<()>
+where
+    W: Write,
+{
+    let resolver = resolve_file;
+    merge_assembly_structure_to_step_with_resolver(assembly, load_references, writer, resolver)
+}
+
+/// The function consumes the given assembly structure and writes the merged step data to the given
+/// writer.
+/// All references to external step files are loaded and merged into the final step data using the
+/// given reference resolver.
+/// If a reference cannot be resolved, an error is dumped to the log and the process continues.
+/// The whole merging process is executed in a streaming fashion to reduce the memory footprint.
+///
+/// # Arguments
+/// * `assembly` - The assembly structure to merged.
+/// * `load_references` - Flag to indicate if external references should be loaded.
+/// * `writer` - The writer for the merged step file.
+pub fn merge_assembly_structure_to_step_with_resolver<W, R, Resolver>(
+    assembly: &Assembly,
+    load_references: bool,
+    writer: W,
+    resolver: Resolver,
+) -> Result<()>
+where
+    W: Write,
+    R: Read,
+    Resolver: FnMut(&str) -> Result<R>,
+{
+    let mut merger = StepMerger::new(writer, assembly, resolver)?;
     merger.merge(load_references)?;
 
     Ok(())
 }
 
 /// The internal step merge operator
-struct StepMerger<'a, W: Write> {
+struct StepMerger<'a, W, R, Resolver>
+where
+    W: Write,
+    R: Read,
+    Resolver: FnMut(&str) -> Result<R>,
+{
     /// The assembly structure to be merged.
     assembly: &'a Assembly,
 
     /// The writer for the merged step file.
     writer: StepWriter<W>,
+
+    /// The reference resolver to load external step files.
+    resolver: Resolver,
 
     /// The id of the STEP entry for the default coordinate system.
     default_coordinate_system: u64,
@@ -57,19 +107,20 @@ struct StepMerger<'a, W: Write> {
     mechanical_design_ids: Vec<u64>,
 }
 
-impl<'a, W: Write> StepMerger<'a, W> {
+impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W, R, Resolver> {
     /// Creates a new step merger with the given writer and assembly structure.
     ///
     /// # Arguments
     /// * `writer` - The writer for the merged step file.
     /// * `assembly` - The assembly structure to be merged.
-    pub fn new(writer: W, assembly: &'a Assembly) -> Result<Self> {
+    pub fn new(writer: W, assembly: &'a Assembly, resolver: Resolver) -> Result<Self> {
         let protocol = vec!["AP203_CONFIGURATION_CONTROLLED_3D_DESIGN_OF_MECHANICAL_PARTS_AND_ASSEMBLIES_MIM_LF { 1 0 10303 403 1 1 4 }".to_owned()];
         let step_writer = StepWriter::new(writer, "2;1", "", &protocol)?;
 
         Ok(StepMerger {
             assembly,
             writer: step_writer,
+            resolver,
             default_coordinate_system: 0,
             id_counter: 0,
             mechanical_design_ids: Vec::new(),
@@ -253,24 +304,21 @@ impl<'a, W: Write> StepMerger<'a, W> {
     /// Returns the STEP ids of the root nodes.
     ///
     /// # Arguments
-    /// * `file_path` - The path to the step file to be loaded.
-    fn load_and_add_step<P: AsRef<Path>>(&mut self, file_path: P) -> Result<Vec<NodeStepIds>> {
-        info!("Load step file {}...", file_path.as_ref().display());
+    /// * `link` - The link to the step file.
+    fn load_and_add_step(&mut self, link: &str) -> Result<Vec<NodeStepIds>> {
+        info!("Load step file {}...", link);
 
-        trace!("Open step file {}...", file_path.as_ref().display());
-        let mut file = File::open(file_path.as_ref())?;
+        trace!("Open step file {}...", link);
+        let r = (self.resolver)(link)?;
 
         trace!("Create step reader...");
-        let parser = STEPReader::new(&mut file)?;
+        let parser = STEPReader::new(r)?;
 
         debug!("Stream step entries...");
-        let result = self.load_and_add_step_entries(
-            parser.into_iter(),
-            file_path.as_ref().to_string_lossy().as_ref(),
-        )?;
+        let result = self.load_and_add_step_entries(parser.into_iter(), link)?;
         debug!("Stream step entries...DONE");
 
-        info!("Load step file {}...DONE", file_path.as_ref().display());
+        info!("Load step file {}...DONE", link);
         Ok(result)
     }
 
@@ -581,5 +629,55 @@ impl<'a, W: Write> StepMerger<'a, W> {
         ))?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::{BufRead, BufReader, Cursor};
+
+    use super::*;
+
+    #[test]
+    fn test_merge_assembly_structure_to_step_with_resolver() {
+        let cube_stp = include_bytes!("../../../test_data/cube.stp");
+        let sphere_stp = include_bytes!("../../../test_data/sphere.stp");
+        let assembly = include_bytes!("../../../test_data/cube-and-sphere.json");
+        let merged = include_bytes!("../../../test_data/cube-and-sphere.stp");
+
+        let resolver = |link: &str| -> Result<_> {
+            match link {
+                "cube.stp" => Ok(Cursor::new(cube_stp.as_slice())),
+                "sphere.stp" => Ok(Cursor::new(sphere_stp.as_slice())),
+                _ => Err(Error::InvalidFormat(format!("Unknown link {}", link))),
+            }
+        };
+
+        let mut output = Vec::new();
+        merge_assembly_structure_to_step_with_resolver(
+            &serde_json::from_slice::<Assembly>(assembly).unwrap(),
+            true,
+            &mut output,
+            resolver,
+        )
+        .unwrap();
+
+        let mut skip_lines = true;
+        for (l, (expected, actual)) in BufReader::new(merged.as_ref())
+            .lines()
+            .zip(BufReader::new(output.as_slice()).lines())
+            .enumerate()
+        {
+            let expected = expected.unwrap();
+            let actual = actual.unwrap();
+
+            if expected.starts_with("DATA;") {
+                skip_lines = false;
+            }
+
+            if !skip_lines {
+                assert_eq!(expected, actual, "Mismatch at line {}", l + 1);
+            }
+        }
     }
 }
