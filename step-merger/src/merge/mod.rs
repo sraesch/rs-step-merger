@@ -12,7 +12,7 @@ use crate::{
         root_nodes::FindRootNodes,
         utils::{get_ids_from_mechanical_part, NodeStepIds},
     },
-    step::{STEPReader, StepEntry, StepWriter},
+    step::{STEPReader, STEPReaderTrait, StepEntry, StepWriter},
     Assembly, Error, Node, Result,
 };
 

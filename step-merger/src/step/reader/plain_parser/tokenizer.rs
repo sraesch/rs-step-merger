@@ -147,7 +147,7 @@ impl<P: Iterator<Item = Result<char>>> Iterator for Tokenizer<P> {
 mod test {
     use std::io::Cursor;
 
-    use crate::step::reader::char_reader::CharReader;
+    use crate::step::reader::plain_parser::char_reader::CharReader;
 
     use super::*;
 
@@ -281,11 +281,11 @@ ENDSEC;
 
     #[test]
     fn test_tokenizer_complex2() {
-        let mut input = Cursor::new(include_bytes!("../../../../test_data/wiki.stp"));
+        let mut input = Cursor::new(include_bytes!("../../../../../test_data/wiki.stp"));
         let char_reader = CharReader::new(&mut input);
         let parser = Tokenizer::new(char_reader);
 
-        let output = include_str!("../../../../test_data/wiki-normalized.stp");
+        let output = include_str!("../../../../../test_data/wiki-normalized.stp");
         assert_eq!(output, parser.into_string().unwrap());
     }
 }

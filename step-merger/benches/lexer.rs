@@ -18,7 +18,8 @@ pub fn lexer_chumsky_bench(c: &mut Criterion) {
 }
 
 pub fn lexer_logos_bench(c: &mut Criterion) {
-    use step_merger::step::lexer_logos::Token;
+    use step_merger::step::Token;
+
     let filename = "../test_data/1.stp";
     let s = fs::read_to_string(filename).unwrap();
     c.bench_function("logos 1.stp", |b| {
