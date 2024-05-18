@@ -631,7 +631,10 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
 
 #[cfg(test)]
 mod test {
-    use std::io::{BufRead, BufReader, Cursor};
+    use std::{
+        io::{BufRead, BufReader, Cursor},
+        sync::Arc,
+    };
 
     use super::*;
 
@@ -646,7 +649,13 @@ mod test {
             match link {
                 "cube.stp" => Ok(Cursor::new(cube_stp.as_slice())),
                 "sphere.stp" => Ok(Cursor::new(sphere_stp.as_slice())),
-                _ => Err(Error::InvalidFormat(format!("Unknown link {}", link))),
+                _ => Err(Error::FailedOpenFile(
+                    Arc::new(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        format!("File not found: {}", link),
+                    )),
+                    link.to_owned(),
+                )),
             }
         };
 
