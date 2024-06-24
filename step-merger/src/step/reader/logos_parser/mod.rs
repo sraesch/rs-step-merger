@@ -5,6 +5,7 @@ pub mod lexer_logos;
 mod stream_lexer;
 
 use buffered_reader::BufferedReader;
+use log::{debug, trace};
 
 use crate::{step::StepEntry, Error, Result};
 
@@ -41,6 +42,14 @@ impl<R: Read> STEPReader<R> {
     {
         let mut p = p;
 
+        // Check if the buffer is filled enough and if not, fill it.
+        // We ignore if the end of the file is reached.
+        match self.reader.check_if_filled_enough() {
+            Err(Error::EndOfInput()) => {}
+            Err(err) => return Err(err),
+            Ok(()) => {}
+        }
+
         // try yo parse until it works or the end of the file is reached
         loop {
             let lexer = TokenIterator::new(self.reader.as_str()?);
@@ -66,6 +75,7 @@ impl<R: Read> STEPReader<R> {
     /// Parses the initial ISO String 'ISO-10303-21' and fails if it is not found or not correctly
     /// formatted.
     fn parse_iso_line(&mut self) -> Result<()> {
+        debug!("Parsing ISO line");
         self.parse_element(|p| {
             match p.skip_whitespace_tokens() {
                 Ok(()) => {}
@@ -102,6 +112,7 @@ impl<R: Read> STEPReader<R> {
 
     /// Searches for the DATA section and fails if it is not found.
     fn find_data_section(&mut self) -> Result<()> {
+        debug!("Searching for DATA section");
         self.parse_element(|p| {
             loop {
                 match p.next() {
@@ -126,6 +137,8 @@ impl<R: Read> STEPReader<R> {
     /// Reads the next STEP entry and returns none if the end of the section is reached.
     /// Otherwise, returns the read STEP entry or an error if the input is invalid.
     fn read_next_entry(&mut self) -> Result<Option<StepEntry>> {
+        trace!("Reading next entry");
+
         // check if the end of the section is already reached
         if self.reached_end {
             return Ok(None);

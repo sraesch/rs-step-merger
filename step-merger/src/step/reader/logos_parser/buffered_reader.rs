@@ -1,4 +1,5 @@
 use circular::Buffer;
+use log::{debug, trace};
 use std::{io::Read, sync::Arc};
 use utf8::{decode, DecodeError};
 
@@ -36,6 +37,8 @@ impl<R: Read> BufferedReader<R> {
         let new_capacity = BUFFER_GROWTH_FACTOR * self.buffer.capacity();
         self.buffer.grow(new_capacity);
 
+        debug!("Buffer grown to {} bytes", new_capacity);
+
         // Fill the buffer with data from the reader.
         self.fill_buffer()
     }
@@ -46,6 +49,16 @@ impl<R: Read> BufferedReader<R> {
     /// * `n` - The number of bytes to consume.
     pub fn consumed(&mut self, n: usize) {
         self.buffer.consume(n);
+    }
+
+    /// Checks if the buffer is already too empty and fills it if necessary.
+    pub fn check_if_filled_enough(&mut self) -> Result<()> {
+        if self.buffer.available_data() * 4 < self.buffer.capacity() {
+            trace!("Buffer too empty, filling it...");
+
+            self.fill_buffer()?;
+        }
+        Ok(())
     }
 
     /// Returns as many UTF-8 characters as possible from the buffer.
@@ -61,9 +74,11 @@ impl<R: Read> BufferedReader<R> {
 
     /// Fills the buffer with data from the reader.
     fn fill_buffer(&mut self) -> Result<()> {
+        let space = self.buffer.space();
+
         let read = self
             .reader
-            .read(self.buffer.space())
+            .read(space)
             .map_err(|e| Error::IO(Arc::new(e)))?;
 
         if read == 0 {
