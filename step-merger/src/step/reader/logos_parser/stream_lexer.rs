@@ -1,14 +1,11 @@
-use std::{fmt::Display, io::Read, sync::Arc};
+use std::{
+    fmt::Display,
+    sync::{atomic::AtomicUsize, Arc},
+};
 
-use logos::Logos;
-use utf8::{decode, DecodeError};
+use logos::{Logos, SpannedIter};
 
 use crate::{Error, Result};
-
-use circular::Buffer;
-
-const BUFFER_SIZE_START: usize = 1024;
-const BUFFER_GROWTH_FACTOR: usize = 2;
 
 #[derive(Logos, Debug, PartialEq)]
 pub enum Token {
@@ -57,128 +54,65 @@ impl Display for Token {
     }
 }
 
-struct BufferedReader<R: Read> {
-    reader: R,
-    buffer: Buffer,
+pub struct TokenIterator<'a> {
+    it: SpannedIter<'a, Token>,
+    consumed_bytes: Arc<AtomicUsize>,
 }
 
-impl<R: Read> BufferedReader<R> {
-    pub fn new(reader: R) -> Self {
-        Self {
-            reader,
-            buffer: Buffer::with_capacity(BUFFER_SIZE_START),
-        }
-    }
-
-    /// Consumes the buffer up to the given index.
+impl<'a> TokenIterator<'a> {
+    /// Creates a new token iterator from a buffered reader.
     ///
     /// # Arguments
-    /// * `n` - The number of bytes to consume.
-    pub fn consumed(&mut self, n: usize) {
-        self.buffer.consume(n);
-    }
+    /// * `src` - The source to parse
+    pub fn new(src: &'a str) -> Self {
+        let lexer = Token::lexer(src);
+        let it = lexer.spanned();
 
-    /// Returns as many UTF-8 characters as possible from the buffer.
-    pub fn as_str(&self) -> Result<&str> {
-        match decode(self.buffer.data()) {
-            Ok(s) => Ok(s),
-            Err(DecodeError::Incomplete { valid_prefix, .. }) => Ok(valid_prefix),
-            Err(err) => {
-                panic!("Error: {}", err);
-            }
-        }
-    }
-
-    /// Updates the buffer capacity by the growth factor.
-    pub fn update_buffer(&mut self) {
-        let new_capacity = BUFFER_GROWTH_FACTOR * self.buffer.capacity();
-        self.buffer.grow(new_capacity);
-    }
-
-    /// Fills the buffer with data from the reader.
-    pub fn fill_buffer(&mut self) -> Result<()> {
-        let read = self
-            .reader
-            .read(self.buffer.space())
-            .map_err(|e| Error::IO(Arc::new(e)))?;
-
-        if read == 0 {
-            return Err(Error::EndOfInput());
-        } else {
-            self.buffer.fill(read);
-        }
-
-        Ok(())
-    }
-}
-
-pub struct TokenIterator<R: Read> {
-    buffer: BufferedReader<R>,
-}
-
-impl<R: Read> TokenIterator<R> {
-    pub fn new(reader: R) -> Self {
         Self {
-            buffer: BufferedReader::new(reader),
+            it,
+            consumed_bytes: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// Returns a reference to the internal consumed bytes counter.
+    pub fn consumed_bytes(&self) -> Arc<AtomicUsize> {
+        self.consumed_bytes.clone()
     }
 }
 
-impl<R: Read> Iterator for TokenIterator<R> {
+impl<'a> Iterator for TokenIterator<'a> {
     type Item = Result<Token>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let s = match self.buffer.as_str() {
-                Ok(s) => s,
-                Err(e) => return Some(Err(e)),
-            };
-            let lexer: logos::Lexer<Token> = Token::lexer(s);
-            let mut lexer = lexer.spanned();
-
-            match lexer.next() {
-                Some((Ok(token), span)) => {
-                    self.buffer.consumed(span.end);
-                    return Some(Ok(token));
-                }
-                Some((Err(_), _)) => {
-                    // we assume that we need to update the buffer
-                    self.buffer.update_buffer();
-                }
-                None => {}
+        match self.it.next() {
+            Some((Ok(token), span)) => {
+                self.consumed_bytes.store(span.end, std::sync::atomic::Ordering::Relaxed);
+                Some(Ok(token))
             }
-
-            match self.buffer.fill_buffer() {
-                Ok(_) => {}
-                Err(Error::EndOfInput()) => {
-                    return None;
-                }
-                Err(e) => return Some(Err(e)),
-            }
+            Some((Err(_), _)) => Some(Err(Error::ParsingTokenError())),
+            None => None,
         }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
-
     use super::*;
 
     #[test]
     fn test_tokens_iterator_comments() {
-        let mut tokens = TokenIterator::new(Cursor::new("/* HELLO WORLD */ HEADER"));
+        let mut tokens = TokenIterator::new("/* HELLO WORLD */ HEADER");
 
         assert_eq!(Token::Header, tokens.next().unwrap().unwrap());
         assert!(tokens.next().is_none());
 
-        let mut tokens = TokenIterator::new(Cursor::new(
+        let mut tokens = TokenIterator::new(
             "/* HELLO WORLD
         Some other line
         */
 
         HEADER",
-        ));
+        );
 
         assert_eq!(Token::Header, tokens.next().unwrap().unwrap());
         assert!(tokens.next().is_none());
@@ -186,7 +120,7 @@ mod test {
 
     #[test]
     fn test_tokens_iterator_identifier() {
-        let mut tokens = TokenIterator::new(Cursor::new("HEADER SOME_IDENTIFIER"));
+        let mut tokens = TokenIterator::new("HEADER SOME_IDENTIFIER");
 
         assert_eq!(Token::Header, tokens.next().unwrap().unwrap());
         assert_eq!(
@@ -198,7 +132,7 @@ mod test {
 
     #[test]
     fn test_string() {
-        let mut tokens = TokenIterator::new(Cursor::new("'Hello World'"));
+        let mut tokens = TokenIterator::new("'Hello World'");
 
         assert_eq!(
             Token::String("Hello World".to_string()),
@@ -209,7 +143,7 @@ mod test {
 
     #[test]
     fn test_reference() {
-        let mut tokens = TokenIterator::new(Cursor::new("#1 # 2"));
+        let mut tokens = TokenIterator::new("#1 # 2");
 
         assert_eq!(Token::Reference(1u64), tokens.next().unwrap().unwrap());
         assert_eq!(Token::Reference(2u64), tokens.next().unwrap().unwrap());
@@ -218,7 +152,7 @@ mod test {
 
     #[test]
     fn test_sym() {
-        let mut tokens = TokenIterator::new(Cursor::new("=;(),#&$.*"));
+        let mut tokens = TokenIterator::new("=;(),#&$.*");
 
         assert_eq!(Token::Eq, tokens.next().unwrap().unwrap());
         assert_eq!(Token::Sem, tokens.next().unwrap().unwrap());
@@ -231,7 +165,7 @@ mod test {
 
     #[test]
     fn test_tokens_iterator_cube() {
-        let reader = Cursor::new(include_bytes!("../../../../../test_data/cube.stp"));
+        let reader = include_str!("../../../../../test_data/cube.stp");
         let tokens = TokenIterator::new(reader);
 
         for token in tokens {
@@ -241,7 +175,5 @@ mod test {
                 _ => print!("{}", token),
             }
         }
-
-        println!();
     }
 }

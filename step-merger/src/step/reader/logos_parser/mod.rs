@@ -1,7 +1,10 @@
 use std::{io::Read, iter::Peekable};
 
+mod buffered_reader;
 pub mod lexer_logos;
 mod stream_lexer;
+
+use buffered_reader::BufferedReader;
 
 use crate::{step::StepEntry, Error, Result};
 
@@ -9,68 +12,115 @@ use self::stream_lexer::{Token, TokenIterator};
 
 use super::STEPReaderTrait;
 
-// pub mod lexer_logos;
+/// A peekable token iterator that allows to peek the next token without consuming it.
+type PTokenIterator<'a> = Peekable<TokenIterator<'a>>;
 
 /// The STEP reader consumes a reader and parses the STEP entries from it. All entries are returned
 /// as `StepEntry` instances in the order they appear in the file.
 /// The reader implements the `Iterator` trait and returns `Result<StepEntry>` instances s.t. the
 /// returned entries can be processed in a streaming fashion.
 pub struct STEPReader<R: Read> {
-    tokenizer: Peekable<TokenIterator<R>>,
+    /// The internal buffer reader that reads from the input reader.
+    reader: BufferedReader<R>,
 
     /// Indicates if the end of the data section has been reached.
     reached_end: bool,
 }
 
 impl<R: Read> STEPReader<R> {
+    /// Tries to parse an element from the reader with the given token based parser `p`.
+    /// The parsers tries
+    ///
+    /// # Arguments
+    /// * `p` - The parser that tries to parse the element from the reader.
+    ///         The parser returns None if the element could not be parsed and Some(T) if the
+    ///         element was successfully parsed.
+    fn parse_element<P, T>(&mut self, p: P) -> Result<T>
+    where
+        P: FnMut(&mut PTokenIterator) -> Result<T>,
+    {
+        let mut p = p;
+
+        // try yo parse until it works or the end of the file is reached
+        loop {
+            let lexer = TokenIterator::new(self.reader.as_str()?);
+            let consumed_bytes = lexer.consumed_bytes();
+            let mut lexer = lexer.peekable();
+
+            // try to parse the element and if it is successful, consume the bytes and return
+            if let Ok(ret) = p(&mut lexer) {
+                // consume the bytes that have been successfully parsed
+                self.reader
+                    .consumed(consumed_bytes.load(std::sync::atomic::Ordering::Relaxed));
+
+                return Ok(ret);
+            }
+
+            // try to grow the buffer and retry
+            self.reader.grow()?;
+        }
+    }
+}
+
+impl<R: Read> STEPReader<R> {
     /// Parses the initial ISO String 'ISO-10303-21' and fails if it is not found or not correctly
     /// formatted.
     fn parse_iso_line(&mut self) -> Result<()> {
-        self.skip_whitespace_tokens()?;
-        match self.tokenizer.next() {
-            Some(Ok(Token::StartTag)) => {}
-            Some(Ok(token)) => {
-                return Err(Error::UnexpectedToken(
-                    "ISO-10303-21".to_string(),
-                    token.to_string(),
-                ))
+        self.parse_element(|p| {
+            match p.skip_whitespace_tokens() {
+                Ok(()) => {}
+                Err(err) => return Err(err),
             }
-            Some(Err(err)) => return Err(err),
-            None => return Err(Error::EndOfInput()),
-        }
 
-        self.skip_whitespace_tokens()?;
-        match self.tokenizer.next() {
-            Some(Ok(Token::Sem)) => {}
-            Some(Ok(token)) => {
-                return Err(Error::UnexpectedToken(";".to_string(), token.to_string()))
+            match p.next() {
+                Some(Ok(Token::StartTag)) => {}
+                Some(Ok(token)) => {
+                    return Err(Error::UnexpectedToken(
+                        "ISO-10303-21".to_string(),
+                        token.to_string(),
+                    ))
+                }
+                Some(Err(err)) => return Err(err),
+                None => return Err(Error::EndOfInput()),
             }
-            Some(Err(err)) => return Err(err),
-            None => return Err(Error::EndOfInput()),
-        }
+
+            p.skip_whitespace_tokens()?;
+            match p.next() {
+                Some(Ok(Token::Sem)) => {}
+                Some(Ok(token)) => {
+                    return Err(Error::UnexpectedToken(";".to_string(), token.to_string()))
+                }
+                Some(Err(err)) => return Err(err),
+                None => return Err(Error::EndOfInput()),
+            }
+
+            Ok(Some(()))
+        })?;
 
         Ok(())
     }
 
     /// Searches for the DATA section and fails if it is not found.
     fn find_data_section(&mut self) -> Result<()> {
-        loop {
-            match self.tokenizer.next() {
-                Some(Ok(Token::Data)) => break,
-                Some(Ok(_)) => {}
-                Some(Err(err)) => return Err(err),
-                None => return Err(Error::NoDataSection()),
+        self.parse_element(|p| {
+            loop {
+                match p.next() {
+                    Some(Ok(Token::Data)) => break,
+                    Some(Ok(_)) => {}
+                    Some(Err(err)) => return Err(err),
+                    None => return Err(Error::NoDataSection()),
+                }
             }
-        }
 
-        self.skip_whitespace_tokens()?;
+            p.skip_whitespace_tokens()?;
 
-        match self.tokenizer.next() {
-            Some(Ok(Token::Sem)) => Ok(()),
-            Some(Ok(token)) => Err(Error::UnexpectedToken(";".to_string(), token.to_string())),
-            Some(Err(err)) => Err(err),
-            None => Err(Error::EndOfInput()),
-        }
+            match p.next() {
+                Some(Ok(Token::Sem)) => Ok(()),
+                Some(Ok(token)) => Err(Error::UnexpectedToken(";".to_string(), token.to_string())),
+                Some(Err(err)) => Err(err),
+                None => Err(Error::EndOfInput()),
+            }
+        })
     }
 
     /// Reads the next STEP entry and returns none if the end of the section is reached.
@@ -81,73 +131,90 @@ impl<R: Read> STEPReader<R> {
             return Ok(None);
         }
 
-        self.skip_whitespace_tokens()?;
+        let mut reached_end = false;
+        let ret = self.parse_element(|p| {
+            p.skip_whitespace_tokens()?;
 
-        // expect reference to the next STEP entry or the end of the section
-        let id = match self.tokenizer.next() {
-            Some(Ok(Token::Reference(id))) => id,
-            Some(Ok(Token::Endsec)) => {
-                self.reached_end = true;
-                return Ok(None);
-            }
-            Some(Ok(token)) => {
-                return Err(Error::UnexpectedToken("#".to_string(), token.to_string()))
-            }
-            Some(Err(err)) => return Err(err),
-            None => return Err(Error::EndOfInput()),
-        };
-
-        self.skip_whitespace_tokens()?;
-
-        // expect equal sign
-        match self.tokenizer.next() {
-            Some(Ok(Token::Eq)) => {}
-            Some(Ok(token)) => {
-                return Err(Error::UnexpectedToken("=".to_string(), token.to_string()))
-            }
-            Some(Err(err)) => return Err(err),
-            None => return Err(Error::EndOfInput()),
-        }
-
-        // parse the definition of the STEP entry
-        let mut definition = String::new();
-        loop {
-            match self.tokenizer.next() {
-                Some(Ok(Token::Sem)) => break,
-                Some(Ok(Token::Whitespace)) => definition.push(' '),
-                Some(Ok(Token::Comments)) => {}
-                Some(Ok(Token::Definition(d))) => {
-                    definition.push_str(&d);
+            // expect reference to the next STEP entry or the end of the section
+            let id = match p.next() {
+                Some(Ok(Token::Reference(id))) => id,
+                Some(Ok(Token::Endsec)) => {
+                    reached_end = true;
+                    return Ok(None);
                 }
-                Some(Ok(Token::Eq)) => definition.push('='),
-                Some(Ok(Token::String(s))) => {
-                    definition.push('\'');
-                    definition.push_str(&s);
-                    definition.push('\'');
-                }
-                Some(Ok(Token::Reference(r))) => definition.push_str(&format!("#{}", r)),
                 Some(Ok(token)) => {
-                    return Err(Error::UnexpectedToken(";".to_string(), token.to_string()))
+                    println!("{:?}", token);
+                    println!("{:?}", p.next());
+                    println!("{:?}", p.next());
+
+                    return Err(Error::UnexpectedToken("#".to_string(), token.to_string()));
+                }
+                Some(Err(err)) => return Err(err),
+                None => return Err(Error::EndOfInput()),
+            };
+
+            p.skip_whitespace_tokens()?;
+
+            // expect equal sign
+            match p.next() {
+                Some(Ok(Token::Eq)) => {}
+                Some(Ok(token)) => {
+                    return Err(Error::UnexpectedToken("=".to_string(), token.to_string()))
                 }
                 Some(Err(err)) => return Err(err),
                 None => return Err(Error::EndOfInput()),
             }
-        }
 
-        Ok(Some(StepEntry { id, definition }))
+            // parse the definition of the STEP entry
+            let mut definition = String::new();
+            loop {
+                match p.next() {
+                    Some(Ok(Token::Sem)) => break,
+                    Some(Ok(Token::Whitespace)) => definition.push(' '),
+                    Some(Ok(Token::Comments)) => {}
+                    Some(Ok(Token::Definition(d))) => {
+                        definition.push_str(&d);
+                    }
+                    Some(Ok(Token::Eq)) => definition.push('='),
+                    Some(Ok(Token::String(s))) => {
+                        definition.push('\'');
+                        definition.push_str(&s);
+                        definition.push('\'');
+                    }
+                    Some(Ok(Token::Reference(r))) => definition.push_str(&format!("#{}", r)),
+                    Some(Ok(token)) => {
+                        return Err(Error::UnexpectedToken(";".to_string(), token.to_string()))
+                    }
+                    Some(Err(err)) => return Err(err),
+                    None => return Err(Error::EndOfInput()),
+                }
+            }
+
+            Ok(Some(StepEntry { id, definition }))
+        })?;
+
+        self.reached_end = reached_end;
+
+        Ok(ret)
     }
+}
 
+trait BasicParserFunctionalities {
     /// Skips whitespace tokens, i.e., whitespace and comments.
-    pub fn skip_whitespace_tokens(&mut self) -> Result<()> {
+    fn skip_whitespace_tokens(&mut self) -> Result<()>;
+}
+
+impl<'a> BasicParserFunctionalities for PTokenIterator<'a> {
+    fn skip_whitespace_tokens(&mut self) -> Result<()> {
         loop {
-            match self.tokenizer.peek() {
+            match self.peek() {
                 Some(Ok(Token::Whitespace)) => {
-                    if let Some(Err(err)) = self.tokenizer.next() {
+                    if let Some(Err(err)) = self.next() {
                         return Err(err);
                     }
                 }
                 Some(Ok(Token::Comments)) => {
-                    if let Some(Err(err)) = self.tokenizer.next() {
+                    if let Some(Err(err)) = self.next() {
                         return Err(err);
                     }
                 }
@@ -175,10 +242,10 @@ impl<R: Read> STEPReaderTrait<R> for STEPReader<R> {
     }
 
     fn new(reader: R) -> Result<Self> {
-        let tokenizer = TokenIterator::new(reader).peekable();
+        let reader = BufferedReader::new(reader);
 
         let mut step_parser = STEPReader {
-            tokenizer,
+            reader,
             reached_end: false,
         };
 

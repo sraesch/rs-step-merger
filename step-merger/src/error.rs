@@ -19,6 +19,9 @@ pub enum Error {
     #[error("Unexpected identifier: {0}")]
     UnexpectedIdentifier(String),
 
+    #[error("Failed to parsing token")]
+    ParsingTokenError(),
+
     #[error("Unexpected token. Expected {0}, got {1}")]
     UnexpectedToken(String, String),
 
