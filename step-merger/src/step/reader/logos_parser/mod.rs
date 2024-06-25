@@ -52,7 +52,7 @@ impl<R: Read> STEPReader<R> {
 
         // try yo parse until it works or the end of the file is reached
         loop {
-            let lexer = TokenIterator::new(self.reader.as_str()?);
+            let lexer = TokenIterator::new(self.reader.as_str());
             let consumed_bytes = lexer.consumed_bytes();
             let mut lexer = lexer.peekable();
 

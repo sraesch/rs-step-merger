@@ -86,7 +86,8 @@ impl<'a> Iterator for TokenIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.it.next() {
             Some((Ok(token), span)) => {
-                self.consumed_bytes.store(span.end, std::sync::atomic::Ordering::Relaxed);
+                self.consumed_bytes
+                    .store(span.end, std::sync::atomic::Ordering::Relaxed);
                 Some(Ok(token))
             }
             Some((Err(_), _)) => Some(Err(Error::ParsingTokenError())),
