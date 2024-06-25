@@ -145,10 +145,6 @@ impl<R: Read> STEPReader<R> {
                     return Ok(None);
                 }
                 Some(Ok(token)) => {
-                    println!("{:?}", token);
-                    println!("{:?}", p.next());
-                    println!("{:?}", p.next());
-
                     return Err(Error::UnexpectedToken("#".to_string(), token.to_string()));
                 }
                 Some(Err(err)) => return Err(err),
