@@ -53,7 +53,7 @@ fn run_program() -> Result<()> {
 
     info!("Read assembly structure...");
     let t = Instant::now();
-    let assembly: Assembly = step_merger::Assembly::from_file(options.input_file)?;
+    let assembly: Assembly = step_merger::Assembly::from_file(options.input_file.clone())?;
     info!(
         "Read assembly structure...DONE in {} ms",
         t.elapsed().as_millis()
@@ -62,7 +62,9 @@ fn run_program() -> Result<()> {
     info!("Merge assembly structure into step file...");
     let t = Instant::now();
     let out_file = BufWriter::new(File::create(options.output_file)?);
-    merge_assembly_structure_to_step(&assembly, !options.avoid_references, out_file)?;
+
+    let root_link = options.input_file.to_string_lossy().to_string();
+    merge_assembly_structure_to_step(&root_link, &assembly, !options.avoid_references, out_file)?;
     info!(
         "Merge assembly structure into step file...DONE in {} s",
         t.elapsed().as_secs_f64()
