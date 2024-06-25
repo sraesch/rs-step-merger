@@ -29,12 +29,14 @@ pub struct STEPReader<R: Read> {
 }
 
 impl<R: Read> STEPReader<R> {
-    /// Tries to parse an element from the reader with the given token based parser `p`.
-    /// The parsers tries
+    /// Utility function to parse an element from the reader with the given token based parser `p`.
+    /// The parser tries to successfully apply the parser to the input and if it fails, we'll grow the
+    /// buffer and try again until we reach the end of the input or the parser is successful.
+    /// The function returns the parsed element or an error if the input is invalid.
     ///
     /// # Arguments
     /// * `p` - The parser that tries to parse the element from the reader.
-    ///         The parser returns None if the element could not be parsed and Some(T) if the
+    ///         The parser returns an error if the element could not be parsed and Some(T) if the
     ///         element was successfully parsed.
     fn parse_element<P, T>(&mut self, p: P) -> Result<T>
     where
@@ -43,15 +45,18 @@ impl<R: Read> STEPReader<R> {
         let mut p = p;
 
         // Check if the buffer is filled enough and if not, fill it.
-        // We ignore if the end of the file is reached.
+        // NOTE: We can ignore end of file error as the remaining bytes in the buffer might be
+        //       sufficient to parse the element.
         match self.reader.check_if_filled_enough() {
             Err(Error::EndOfInput()) => {}
             Err(err) => return Err(err),
             Ok(()) => {}
         }
 
-        // try yo parse until it works or the end of the file is reached
+        // We'll try to successfully apply the parser to the input and if it fails, we'll grow the
+        // buffer and try again until we reach the end of the input or the parser is successful.
         loop {
+            // create an iterator as peekable iterator and track the consumed bytes
             let lexer = TokenIterator::new(self.reader.as_str());
             let consumed_bytes = lexer.consumed_bytes();
             let mut lexer = lexer.peekable();
@@ -65,7 +70,8 @@ impl<R: Read> STEPReader<R> {
                 return Ok(ret);
             }
 
-            // try to grow the buffer and retry
+            // We got an issue and thus try to further grow the buffer.
+            // If we reach the end of the input, we'll return the error.
             self.reader.grow()?;
         }
     }
@@ -212,6 +218,7 @@ impl<R: Read> STEPReader<R> {
     }
 }
 
+/// Additional functionalities for the token iterator that are used by the STEP reader.
 trait BasicParserFunctionalities {
     /// Skips whitespace tokens, i.e., whitespace and comments.
     fn skip_whitespace_tokens(&mut self) -> Result<()>;

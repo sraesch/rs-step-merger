@@ -1,4 +1,3 @@
-pub mod lexer_chumsky;
 mod reader;
 mod writer;
 
