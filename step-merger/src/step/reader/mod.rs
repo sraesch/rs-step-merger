@@ -5,8 +5,6 @@ use std::io::Read;
 
 use crate::Result;
 
-pub use logos_parser::lexer_logos::Token;
-
 use super::StepEntry;
 
 /// A trait for STEP readers.

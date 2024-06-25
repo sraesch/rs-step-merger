@@ -1,7 +1,6 @@
 use std::io::Read;
 
 mod buffered_reader;
-pub mod lexer_logos;
 mod stream_lexer;
 
 use buffered_reader::BufferedReader;
