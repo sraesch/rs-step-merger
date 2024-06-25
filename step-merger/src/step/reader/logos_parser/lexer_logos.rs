@@ -3,7 +3,7 @@ use std::fmt::Display;
 use logos::Logos;
 
 #[derive(Logos, Debug, PartialEq)]
-pub enum Token {
+pub enum Token<'a> {
     #[regex(r"\/\*([^*]|\*[^\/])*\*\/", logos::skip)]
     Comments,
     #[regex(r"[ \t\r\n\f]+", logos::skip)]
@@ -38,15 +38,15 @@ pub enum Token {
     StartTag,
     #[token("END-ISO-10303-21")]
     EndTag,
-    #[regex(r"[A-Za-z][A-Za-z0-9\-_]*", |lex| lex.slice().to_owned())]
-    Identifier(String),
-    #[regex(r"\'[^']*\'", |lex| lex.slice().trim_start_matches('\'').trim_end_matches('\'').to_owned())]
-    String(String),
-    #[regex(r"-?(?:0|[1-9]\d*)(?:\.\d*)?(?:[eE][+-]?\d+)?", |lex| lex.slice().to_owned())]
-    Number(String),
+    #[regex(r"[A-Za-z][A-Za-z0-9\-_]*", |lex| lex.slice())]
+    Identifier(&'a str),
+    #[regex(r"\'[^']*\'", |lex| lex.slice().trim_start_matches('\'').trim_end_matches('\''))]
+    String(&'a str),
+    #[regex(r"-?(?:0|[1-9]\d*)(?:\.\d*)?(?:[eE][+-]?\d+)?", |lex| lex.slice())]
+    Number(&'a str),
 }
 
-impl Display for Token {
+impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Comments => write!(f, "/**/"),
@@ -101,29 +101,23 @@ mod test {
     fn test_identifier() {
         let mut lex = Token::lexer("HEADER SOME_IDENTIFIER");
         assert_eq!(Some(Ok(Token::Header)), lex.next());
-        assert_eq!(
-            Some(Ok(Token::Identifier("SOME_IDENTIFIER".to_string()))),
-            lex.next()
-        );
+        assert_eq!(Some(Ok(Token::Identifier("SOME_IDENTIFIER"))), lex.next());
         assert_eq!(None, lex.next());
     }
 
     #[test]
     fn test_string() {
         let mut lex = Token::lexer("'Hello World'");
-        assert_eq!(
-            Some(Ok(Token::String("Hello World".to_string()))),
-            lex.next()
-        );
+        assert_eq!(Some(Ok(Token::String("Hello World"))), lex.next());
         assert_eq!(None, lex.next());
     }
 
     #[test]
     fn test_number() {
         let mut lex = Token::lexer("42 4.522 5e-43");
-        assert_eq!(Some(Ok(Token::Number("42".to_string()))), lex.next());
-        assert_eq!(Some(Ok(Token::Number("4.522".to_string()))), lex.next());
-        assert_eq!(Some(Ok(Token::Number("5e-43".to_string()))), lex.next());
+        assert_eq!(Some(Ok(Token::Number("42"))), lex.next());
+        assert_eq!(Some(Ok(Token::Number("4.522"))), lex.next());
+        assert_eq!(Some(Ok(Token::Number("5e-43"))), lex.next());
         assert_eq!(None, lex.next());
     }
 
