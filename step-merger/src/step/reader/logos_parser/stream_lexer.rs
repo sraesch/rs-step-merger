@@ -1,4 +1,4 @@
-use std::{fmt::Display, iter::Peekable};
+use std::fmt::Display;
 
 use logos::{Logos, SpannedIter};
 
@@ -54,7 +54,7 @@ impl<'a> Display for Token<'a> {
 /// Iterator over the tokens which define the STEP file.
 pub struct TokenIterator<'a> {
     /// The Logos lexer peekable iterator.
-    it: Peekable<SpannedIter<'a, Token<'a>>>,
+    it: SpannedIter<'a, Token<'a>>,
 
     /// The number of bytes consumed by the iterator.
     consumed_bytes: usize,
@@ -68,10 +68,9 @@ impl<'a> TokenIterator<'a> {
     pub fn new(src: &'a str) -> Self {
         let lexer = Token::lexer(src);
         let it = lexer.spanned();
-        let peekable_it = it.peekable();
 
         Self {
-            it: peekable_it,
+            it,
             consumed_bytes: 0,
         }
     }
@@ -79,16 +78,6 @@ impl<'a> TokenIterator<'a> {
     /// Returns a reference to the internal consumed bytes counter.
     pub fn consumed_bytes(&self) -> usize {
         self.consumed_bytes
-    }
-
-    /// Peeks the next token.
-    /// Returns `None` if the iterator is at the end.
-    pub fn peek(&mut self) -> Option<Result<Token>> {
-        match self.it.peek().cloned() {
-            Some((Ok(token), _)) => Some(Ok(token)),
-            Some((Err(_), _)) => Some(Err(Error::ParsingTokenError())),
-            None => None,
-        }
     }
 }
 

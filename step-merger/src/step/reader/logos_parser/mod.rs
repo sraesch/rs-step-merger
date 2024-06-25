@@ -76,11 +76,6 @@ impl<R: Read> STEPReader<R> {
     fn parse_iso_line(&mut self) -> Result<()> {
         debug!("Parsing ISO line");
         self.parse_element(|p| {
-            match p.skip_whitespace_tokens() {
-                Ok(()) => {}
-                Err(err) => return Err(err),
-            }
-
             match p.next() {
                 Some(Ok(Token::StartTag)) => {}
                 Some(Ok(token)) => {
@@ -93,7 +88,6 @@ impl<R: Read> STEPReader<R> {
                 None => return Err(Error::EndOfInput()),
             }
 
-            p.skip_whitespace_tokens()?;
             match p.next() {
                 Some(Ok(Token::Sem)) => {}
                 Some(Ok(token)) => {
@@ -122,8 +116,6 @@ impl<R: Read> STEPReader<R> {
                 }
             }
 
-            p.skip_whitespace_tokens()?;
-
             match p.next() {
                 Some(Ok(Token::Sem)) => Ok(()),
                 Some(Ok(token)) => Err(Error::UnexpectedToken(";".to_string(), token.to_string())),
@@ -145,8 +137,6 @@ impl<R: Read> STEPReader<R> {
 
         let mut reached_end = false;
         let ret = self.parse_element(|p| {
-            p.skip_whitespace_tokens()?;
-
             // expect reference to the next STEP entry or the end of the section
             let id = match p.next() {
                 Some(Ok(Token::Reference(id))) => id,
@@ -164,8 +154,6 @@ impl<R: Read> STEPReader<R> {
                 Some(Err(err)) => return Err(err),
                 None => return Err(Error::EndOfInput()),
             };
-
-            p.skip_whitespace_tokens()?;
 
             // expect equal sign
             match p.next() {
@@ -208,32 +196,6 @@ impl<R: Read> STEPReader<R> {
         self.reached_end = reached_end;
 
         Ok(ret)
-    }
-}
-
-/// Additional functionalities for the token iterator that are used by the STEP reader.
-trait BasicParserFunctionalities {
-    /// Skips whitespace tokens, i.e., whitespace and comments.
-    fn skip_whitespace_tokens(&mut self) -> Result<()>;
-}
-
-impl<'a> BasicParserFunctionalities for TokenIterator<'a> {
-    fn skip_whitespace_tokens(&mut self) -> Result<()> {
-        loop {
-            match self.peek() {
-                Some(Ok(Token::Whitespace)) => {
-                    if let Some(Err(err)) = self.next() {
-                        return Err(err);
-                    }
-                }
-                Some(Ok(Token::Comments)) => {
-                    if let Some(Err(err)) = self.next() {
-                        return Err(err);
-                    }
-                }
-                _ => return Ok(()),
-            }
-        }
     }
 }
 
