@@ -185,12 +185,12 @@ impl<R: Read> STEPReader<R> {
                     Some(Ok(Token::Whitespace)) => definition.push(' '),
                     Some(Ok(Token::Comments)) => {}
                     Some(Ok(Token::Definition(d))) => {
-                        definition.push_str(&d);
+                        definition.push_str(d);
                     }
                     Some(Ok(Token::Eq)) => definition.push('='),
                     Some(Ok(Token::String(s))) => {
                         definition.push('\'');
-                        definition.push_str(&s);
+                        definition.push_str(s);
                         definition.push('\'');
                     }
                     Some(Ok(Token::Reference(r))) => definition.push_str(&format!("#{}", r)),
