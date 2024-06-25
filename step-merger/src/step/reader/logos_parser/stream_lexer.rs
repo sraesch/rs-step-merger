@@ -5,7 +5,7 @@ use logos::{Logos, SpannedIter};
 use crate::{Error, Result};
 
 #[derive(Logos, Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum Token<'a> {
     #[regex(r"\/\*([^*]|\*[^\/])*\*\/", logos::skip)]
     Comments,
     #[regex(r"[ \t\r\n\f]+", logos::skip)]
@@ -26,13 +26,13 @@ pub enum Token {
     StartTag,
     #[token("END-ISO-10303-21")]
     EndTag,
-    #[regex(r"\'[^']*\'", |lex| lex.slice().trim_start_matches('\'').trim_end_matches('\'').to_owned())]
-    String(String),
-    #[regex(r"[^\s;='/]+", |lex| lex.slice().to_owned())]
-    Definition(String),
+    #[regex(r"\'[^']*\'", |lex| lex.slice().trim_start_matches('\'').trim_end_matches('\''))]
+    String(&'a str),
+    #[regex(r"[^\s;='/]+", |lex| lex.slice())]
+    Definition(&'a str),
 }
 
-impl Display for Token {
+impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Comments => write!(f, "/**/"),
@@ -54,7 +54,7 @@ impl Display for Token {
 /// Iterator over the tokens which define the STEP file.
 pub struct TokenIterator<'a> {
     /// The Logos lexer peekable iterator.
-    it: Peekable<SpannedIter<'a, Token>>,
+    it: Peekable<SpannedIter<'a, Token<'a>>>,
 
     /// The number of bytes consumed by the iterator.
     consumed_bytes: usize,
@@ -93,7 +93,7 @@ impl<'a> TokenIterator<'a> {
 }
 
 impl<'a> Iterator for TokenIterator<'a> {
-    type Item = Result<Token>;
+    type Item = Result<Token<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.it.next() {
@@ -136,7 +136,7 @@ mod test {
 
         assert_eq!(Token::Header, tokens.next().unwrap().unwrap());
         assert_eq!(
-            Token::Definition("SOME_IDENTIFIER".to_string()),
+            Token::Definition("SOME_IDENTIFIER"),
             tokens.next().unwrap().unwrap()
         );
         assert!(tokens.next().is_none());
@@ -147,7 +147,7 @@ mod test {
         let mut tokens = TokenIterator::new("'Hello World'");
 
         assert_eq!(
-            Token::String("Hello World".to_string()),
+            Token::String("Hello World"),
             tokens.next().unwrap().unwrap()
         );
         assert!(tokens.next().is_none());
@@ -169,7 +169,7 @@ mod test {
         assert_eq!(Token::Eq, tokens.next().unwrap().unwrap());
         assert_eq!(Token::Sem, tokens.next().unwrap().unwrap());
         assert_eq!(
-            Token::Definition("(),#&$.*".to_string()),
+            Token::Definition("(),#&$.*"),
             tokens.next().unwrap().unwrap()
         );
         assert!(tokens.next().is_none());
