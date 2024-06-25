@@ -1,13 +1,10 @@
-use std::{
-    fmt::Display,
-    sync::{atomic::AtomicUsize, Arc},
-};
+use std::{fmt::Display, iter::Peekable};
 
 use logos::{Logos, SpannedIter};
 
 use crate::{Error, Result};
 
-#[derive(Logos, Debug, PartialEq)]
+#[derive(Logos, Debug, Clone, PartialEq)]
 pub enum Token {
     #[regex(r"\/\*([^*]|\*[^\/])*\*\/", logos::skip)]
     Comments,
@@ -54,29 +51,44 @@ impl Display for Token {
     }
 }
 
+/// Iterator over the tokens which define the STEP file.
 pub struct TokenIterator<'a> {
-    it: SpannedIter<'a, Token>,
-    consumed_bytes: Arc<AtomicUsize>,
+    /// The Logos lexer peekable iterator.
+    it: Peekable<SpannedIter<'a, Token>>,
+
+    /// The number of bytes consumed by the iterator.
+    consumed_bytes: usize,
 }
 
 impl<'a> TokenIterator<'a> {
-    /// Creates a new token iterator from a buffered reader.
+    /// Creates a new token iterator from the given string.
     ///
     /// # Arguments
-    /// * `src` - The source to parse
+    /// * `src` - The string source to parse.
     pub fn new(src: &'a str) -> Self {
         let lexer = Token::lexer(src);
         let it = lexer.spanned();
+        let peekable_it = it.peekable();
 
         Self {
-            it,
-            consumed_bytes: Arc::new(AtomicUsize::new(0)),
+            it: peekable_it,
+            consumed_bytes: 0,
         }
     }
 
     /// Returns a reference to the internal consumed bytes counter.
-    pub fn consumed_bytes(&self) -> Arc<AtomicUsize> {
-        self.consumed_bytes.clone()
+    pub fn consumed_bytes(&self) -> usize {
+        self.consumed_bytes
+    }
+
+    /// Peeks the next token.
+    /// Returns `None` if the iterator is at the end.
+    pub fn peek(&mut self) -> Option<Result<Token>> {
+        match self.it.peek().cloned() {
+            Some((Ok(token), _)) => Some(Ok(token)),
+            Some((Err(_), _)) => Some(Err(Error::ParsingTokenError())),
+            None => None,
+        }
     }
 }
 
@@ -86,8 +98,7 @@ impl<'a> Iterator for TokenIterator<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         match self.it.next() {
             Some((Ok(token), span)) => {
-                self.consumed_bytes
-                    .store(span.end, std::sync::atomic::Ordering::Relaxed);
+                self.consumed_bytes = span.end;
                 Some(Ok(token))
             }
             Some((Err(_), _)) => Some(Err(Error::ParsingTokenError())),

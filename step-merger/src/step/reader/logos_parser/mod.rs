@@ -1,4 +1,4 @@
-use std::{io::Read, iter::Peekable};
+use std::io::Read;
 
 mod buffered_reader;
 pub mod lexer_logos;
@@ -12,9 +12,6 @@ use crate::{step::StepEntry, Error, Result};
 use self::stream_lexer::{Token, TokenIterator};
 
 use super::STEPReaderTrait;
-
-/// A peekable token iterator that allows to peek the next token without consuming it.
-type PTokenIterator<'a> = Peekable<TokenIterator<'a>>;
 
 /// The STEP reader consumes a reader and parses the STEP entries from it. All entries are returned
 /// as `StepEntry` instances in the order they appear in the file.
@@ -40,7 +37,7 @@ impl<R: Read> STEPReader<R> {
     ///         element was successfully parsed.
     fn parse_element<P, T>(&mut self, p: P) -> Result<T>
     where
-        P: FnMut(&mut PTokenIterator) -> Result<T>,
+        P: FnMut(&mut TokenIterator) -> Result<T>,
     {
         let mut p = p;
 
@@ -57,15 +54,12 @@ impl<R: Read> STEPReader<R> {
         // buffer and try again until we reach the end of the input or the parser is successful.
         loop {
             // create an iterator as peekable iterator and track the consumed bytes
-            let lexer = TokenIterator::new(self.reader.as_str());
-            let consumed_bytes = lexer.consumed_bytes();
-            let mut lexer = lexer.peekable();
+            let mut lexer = TokenIterator::new(self.reader.as_str());
 
             // try to parse the element and if it is successful, consume the bytes and return
             if let Ok(ret) = p(&mut lexer) {
                 // consume the bytes that have been successfully parsed
-                self.reader
-                    .consumed(consumed_bytes.load(std::sync::atomic::Ordering::Relaxed));
+                self.reader.consumed(lexer.consumed_bytes());
 
                 return Ok(ret);
             }
@@ -224,7 +218,7 @@ trait BasicParserFunctionalities {
     fn skip_whitespace_tokens(&mut self) -> Result<()>;
 }
 
-impl<'a> BasicParserFunctionalities for PTokenIterator<'a> {
+impl<'a> BasicParserFunctionalities for TokenIterator<'a> {
     fn skip_whitespace_tokens(&mut self) -> Result<()> {
         loop {
             match self.peek() {
