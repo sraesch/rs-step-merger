@@ -5,7 +5,7 @@ use std::{fs::File, io::Cursor, ops::Range, path::Path, str::FromStr, sync::Arc}
 
 use crate::{Error, Result};
 
-pub use reader::STEPReader;
+pub use reader::*;
 pub use writer::StepWriter;
 
 /// A single entry in the STEP file.

@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::{Read, Write},
+    path::Path,
 };
 
 use log::{debug, error, info, trace};
@@ -12,7 +13,7 @@ use crate::{
         root_nodes::FindRootNodes,
         utils::{get_ids_from_mechanical_part, NodeStepIds},
     },
-    step::{STEPReader, StepEntry, StepWriter},
+    step::{STEPReader, STEPReaderTrait, StepEntry, StepWriter},
     Assembly, Error, Node, Result,
 };
 
@@ -24,8 +25,13 @@ mod utils;
 
 /// The function resolves the given file path and returns the file handle.
 /// Helper function for resolving relative file paths.
+///
+/// # Arguments
+/// * `file_path` - The path to the file.
+/// * `root_path` - The root path for the file.
 #[inline]
-pub fn resolve_file(file_path: &str) -> Result<File> {
+pub fn resolve_file(file_path: &str, root_path: &Path) -> Result<File> {
+    let file_path = root_path.join(file_path);
     let file = File::open(file_path)?;
 
     Ok(file)
@@ -38,10 +44,12 @@ pub fn resolve_file(file_path: &str) -> Result<File> {
 /// The whole merging process is executed in a streaming fashion to reduce the memory footprint.
 ///
 /// # Arguments
+/// * ``root_link`` - The link to the assembly file.
 /// * `assembly` - The assembly structure to merged.
 /// * `load_references` - Flag to indicate if external references should be loaded.
 /// * `writer` - The writer for the merged step file.
 pub fn merge_assembly_structure_to_step<W>(
+    root_link: &str,
     assembly: &Assembly,
     load_references: bool,
     writer: W,
@@ -49,7 +57,14 @@ pub fn merge_assembly_structure_to_step<W>(
 where
     W: Write,
 {
-    let resolver = resolve_file;
+    let root_dir = match Path::new(root_link).parent() {
+        Some(dir) => dir,
+        None => Path::new("./"),
+    };
+
+    info!("Root directory: {:?}", root_dir);
+
+    let resolver = |file_path: &str| resolve_file(file_path, root_dir);
     merge_assembly_structure_to_step_with_resolver(assembly, load_references, writer, resolver)
 }
 
@@ -313,6 +328,7 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
 
         trace!("Create step reader...");
         let parser = STEPReader::new(r)?;
+        debug!("STEP reader: {}", parser.get_name());
 
         debug!("Stream step entries...");
         let result = self.load_and_add_step_entries(parser.into_iter(), link)?;

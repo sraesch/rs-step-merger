@@ -19,6 +19,9 @@ pub enum Error {
     #[error("Unexpected identifier: {0}")]
     UnexpectedIdentifier(String),
 
+    #[error("Failed to parsing token")]
+    ParsingTokenError(),
+
     #[error("Unexpected token. Expected {0}, got {1}")]
     UnexpectedToken(String, String),
 
@@ -36,6 +39,12 @@ pub enum Error {
 
     #[error("Failed to open file: {1}")]
     FailedOpenFile(#[source] Arc<std::io::Error>, String),
+
+    #[error("Failed to read")]
+    IO(#[source] Arc<std::io::Error>),
+
+    #[error("Failed to parse utf8 string: {0}")]
+    UTF8(#[from] std::str::Utf8Error),
 
     #[error("No APPLICATION_CONTEXT entry found in step file {0}")]
     AppContextMissing(String),

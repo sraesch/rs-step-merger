@@ -6,3 +6,8 @@ members = ["step-merger", "step-merger-cli"]
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[profile.flamegraph]
+inherits = "release"
+strip = false
+debug = true
