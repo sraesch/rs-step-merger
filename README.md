@@ -1,4 +1,37 @@
 # Step Merger
+The step merger consumes a JSON file that defines an assembly structure and generates a single STEP file that contains all referenced STEP files and merges them into a single monolithic STEP file.
+
+For example, the following JSON file defines an assembly structure that contains two instances of the same cube. The first cube is translated to the left by 2 units, and the second cube is translated to the right by 2 units. The root node contains metadata that can be used to store additional information about the assembly structure.
+```json
+{
+  "nodes": [
+    {
+      "label": "Root Node",
+      "children": [1, 2],
+      "metadata": [
+        {
+          "key": "key1",
+          "value": "value1"
+        },
+        {
+          "key": "key2",
+          "value": "value2"
+        }
+      ]
+    },
+    {
+      "label": "Left Cube Node",
+      "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -2, 0, 0, 1],
+      "link": "cube.stp"
+    },
+    {
+      "label": "Right Cube Node",
+      "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2, 0, 0, 1],
+      "link": "cube.stp"
+    }
+  ]
+}
+```
 
 ## Build project
 First, you'll need to have rust installed. See [here](https://www.rust-lang.org/tools/install) for instructions on how to install rust.
@@ -18,17 +51,3 @@ cd test_data
 ../target/debug/step-merger-cli -i one-cube.json -o gen-cube.stp
 ```
 This will consume the assembly structure being defined in `one-cube.json` and generate a STEP file `gen-cube.stp` in the same directory by loading all referenced files and merging them into a single monolithic STEP file.
-
-## Other things
-
-### Debugging in Neo4J
-In order to visualize the elements and their relations inside a single STEP file, I've created a debugging scenario that uses Neo4J to visualize the elements and their relations.
-To run the debugging scenario for Neo4J, first start the Neo4J server by running the `run_neo4j.sh` script. For that you'll require docker.
-Afterwards, you can feed the STEP file into the Neo4J database by running the following command:
-```bash
-./target/debug/step-export-neo4j -i test_data/cube.stp -u neo4j -p 1234and5
-```
-It will load the STEP file `cube.stp` and dump the elements and their relations into the Neo4J database.
-
-## Reverse engineered STEP specification
-Some step functions being explained [STEP Specification](./doc/step-spec.md)
