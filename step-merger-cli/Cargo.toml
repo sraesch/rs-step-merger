@@ -2,7 +2,7 @@
 name = "step-merger-cli"
 version = "0.3.0"
 edition = "2021"
-authors = ["Sascha Raesch <sascha.raesch@gmail.com>"]
+authors = ["Sascha Raesch <sascha.raesch@gmail.com>", "Jaco Hofmann"]
 description = "CLI for merging STEP files into a single file"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
