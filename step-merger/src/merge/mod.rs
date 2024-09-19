@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use log::{debug, error, info, trace};
+use log::{debug, error, info, trace, warn};
 
 use crate::{
     identity_matrix,
@@ -14,7 +14,7 @@ use crate::{
         utils::{get_ids_from_mechanical_part, NodeStepIds},
     },
     step::{STEPReader, STEPReaderTrait, StepEntry, StepWriter},
-    Assembly, Error, Node, Result,
+    Assembly, Node, Result,
 };
 
 use self::buffered_iterator::BufferedIterator;
@@ -218,6 +218,10 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
             for node in self.assembly.nodes.iter() {
                 trace!("Check node {} for references...", node.get_label());
                 if let Some(link) = node.get_link() {
+                    if link.is_empty() {
+                        continue;
+                    }
+
                     info!("Got link {}...", link);
                     if !reference_map.contains_key(link) {
                         debug!("Load and add step file {}...", link);
@@ -321,14 +325,14 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
     /// # Arguments
     /// * `link` - The link to the step file.
     fn load_and_add_step(&mut self, link: &str) -> Result<Vec<NodeStepIds>> {
-        info!("Load step file {}...", link);
+        info!("Load step file '{}'...", link);
 
-        trace!("Open step file {}...", link);
+        trace!("Open step file '{}'...", link);
         let r = (self.resolver)(link)?;
 
         trace!("Create step reader...");
         let parser = STEPReader::new(r)?;
-        debug!("STEP reader: {}", parser.get_name());
+        debug!("STEP reader: '{}'", parser.get_name());
 
         debug!("Stream step entries...");
         let result = self.load_and_add_step_entries(parser.into_iter(), link)?;
@@ -379,7 +383,11 @@ impl<'a, W: Write, R: Read, Resolver: FnMut(&str) -> Result<R>> StepMerger<'a, W
         }
 
         if app_context_id == 0 {
-            return Err(Error::AppContextMissing(filename.to_string()));
+            warn!(
+                "APPLICATION_CONTEXT entry not found in step file {}",
+                filename
+            );
+            // return Err(Error::AppContextMissing(filename.to_string()));
         }
 
         entries.reset();
@@ -651,6 +659,8 @@ mod test {
         io::{BufRead, BufReader, Cursor},
         sync::Arc,
     };
+
+    use crate::Error;
 
     use super::*;
 
